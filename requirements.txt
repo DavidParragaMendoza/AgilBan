@@ -1,0 +1,8 @@
+# Entorno y herramientas de desarrollo y calidad
+pytest>=8.0.0
+ruff>=0.3.0
+
+# Fase 2: GUI Web Reactiva (opcional para Fase 1)
+# fastapi>=0.110.0
+# uvicorn>=0.28.0
+# reactpy>=1.0.2
