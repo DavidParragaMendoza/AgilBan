@@ -1,15 +1,18 @@
-"""Pruebas unitarias para validaciones puras del núcleo funcional (Proyectos e Integrantes)."""
+"""Pruebas unitarias para validaciones puras del núcleo funcional (Proyectos, Integrantes, Paquetes y Tareas)."""
 
 from app.core.validador import (
     validarCedula,
+    validarDatosTarea,
     validarEliminacionIntegrante,
+    validarEliminacionPaquete,
     validarNombreIntegrante,
+    validarNombrePaquete,
     validarNombreProyecto,
 )
 from app.domain.catalogos import CargoIntegrante
 from app.domain.errores import ErrorDuplicado, ErrorReglaNegocio, ErrorValidacion
-from app.domain.modelos import Integrante, Tarea
-from app.domain.monadas import Alguno, Exito, Fallo
+from app.domain.modelos import Integrante, PaqueteTrabajo, Tarea
+from app.domain.monadas import Alguno, Exito, Fallo, Ninguno
 
 
 class TestValidacionProyecto:
@@ -193,3 +196,125 @@ class TestValidacionIntegrante:
 
         resultado = validarEliminacionIntegrante("0987654321", (i1, i2), tareas)
         assert resultado == Exito("0987654321")
+
+
+class TestValidacionPaquete:
+    """Suite de pruebas para validación y eliminación de paquetes de trabajo."""
+
+    def testValidarNombrePaqueteValido(self) -> None:
+        """Valida nombre de paquete dentro del rango de 1 a 80 caracteres."""
+        resultado = validarNombrePaquete(
+            "Diseño y Arquitectura", ("Pruebas", "Despliegue")
+        )
+        assert resultado == Exito("Diseño y Arquitectura")
+
+    def testValidarNombrePaqueteVacio(self) -> None:
+        """Rechaza nombres de paquete vacíos o de puros espacios."""
+        resultado = validarNombrePaquete("   ", ())
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorValidacion)
+        assert error.campo == "nombre"
+
+    def testValidarNombrePaqueteExcedeLongitud(self) -> None:
+        """Rechaza nombres de paquete que superen los 80 caracteres."""
+        resultado = validarNombrePaquete("P" * 81, ())
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorValidacion)
+        assert error.campo == "nombre"
+
+    def testValidarNombrePaqueteDuplicadoEnProyecto(self) -> None:
+        """Rechaza nombres duplicados en el mismo proyecto ignorando mayúsculas/minúsculas."""
+        resultado = validarNombrePaquete("diseño", ("Diseño", "Desarrollo"))
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorDuplicado)
+        assert error.entidad == "PaqueteTrabajo"
+
+    def testValidarEliminacionPaqueteVacio(self) -> None:
+        """Permite eliminar un paquete de trabajo que no tiene tareas."""
+        paquete = PaqueteTrabajo("PAQ-001", "PROY-001", "Módulo Vacio", tareas=())
+        resultado = validarEliminacionPaquete(paquete)
+        assert resultado == Exito("PAQ-001")
+
+    def testValidarEliminacionPaqueteConTareasBloqueado(self) -> None:
+        """Bloquea la eliminación de un paquete si contiene tareas asociadas."""
+        tarea = Tarea("TAR-001", "PAQ-001", "Tarea de prueba")
+        paquete = PaqueteTrabajo(
+            "PAQ-001", "PROY-001", "Módulo con tareas", tareas=(tarea,)
+        )
+        resultado = validarEliminacionPaquete(paquete)
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorReglaNegocio)
+        assert error.codigo == "PAQUETE_CON_TAREAS"
+
+
+class TestValidacionDatosTarea:
+    """Suite de pruebas para validación de datos de entrada de una tarea."""
+
+    def testValidarDatosTareaValidos(self) -> None:
+        """Valida tarea con título, descripción y fecha objetivo correctos."""
+        resultado = validarDatosTarea(
+            titulo="Implementar autenticación JWT",
+            descripcion=Alguno("Usar tokens con expiración de 1 hora."),
+            fechaObjetivo=Alguno("2026-11-15"),
+        )
+        assert resultado == Exito(
+            (
+                "Implementar autenticación JWT",
+                Alguno("Usar tokens con expiración de 1 hora."),
+                Alguno("2026-11-15"),
+            )
+        )
+
+    def testValidarDatosTareaConCamposOpcionalesNinguno(self) -> None:
+        """Valida tarea válida cuando descripción y fecha son Ninguno."""
+        resultado = validarDatosTarea(
+            titulo="Refactorizar modelos",
+            descripcion=Ninguno(),
+            fechaObjetivo=Ninguno(),
+        )
+        assert resultado == Exito(("Refactorizar modelos", Ninguno(), Ninguno()))
+
+    def testValidarDatosTareaTituloVacio(self) -> None:
+        """Rechaza título vacío o solo con espacios."""
+        resultado = validarDatosTarea("   ", Ninguno(), Ninguno())
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorValidacion)
+        assert error.campo == "titulo"
+
+    def testValidarDatosTareaTituloExcedeLongitud(self) -> None:
+        """Rechaza título que exceda 120 caracteres."""
+        resultado = validarDatosTarea("T" * 121, Ninguno(), Ninguno())
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorValidacion)
+        assert error.campo == "titulo"
+
+    def testValidarDatosTareaDescripcionExcedeLongitud(self) -> None:
+        """Rechaza descripción que supere los 1.000 caracteres."""
+        descLarga = "D" * 1001
+        resultado = validarDatosTarea("Tarea válida", Alguno(descLarga), Ninguno())
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorValidacion)
+        assert error.campo == "descripcion"
+
+    def testValidarDatosTareaFechaInvalidaFormato(self) -> None:
+        """Rechaza fechas que no sigan el formato ISO AAAA-MM-DD."""
+        resultado = validarDatosTarea("Tarea válida", Ninguno(), Alguno("15/11/2026"))
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorValidacion)
+        assert error.campo == "fechaObjetivo"
+
+    def testValidarDatosTareaFechaInexistenteCalendario(self) -> None:
+        """Rechaza fechas con formato numérico pero fecha calendario imposible (ej. 30 de febrero)."""
+        resultado = validarDatosTarea("Tarea válida", Ninguno(), Alguno("2026-02-30"))
+        assert isinstance(resultado, Fallo)
+        error = resultado.obtenerError()
+        assert isinstance(error, ErrorValidacion)
+        assert error.campo == "fechaObjetivo"
