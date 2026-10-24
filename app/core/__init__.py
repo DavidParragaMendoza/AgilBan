@@ -7,6 +7,11 @@ from app.core.edt import (
     obtenerTareasActivas,
     renombrarPaquete,
 )
+from app.core.kanban import (
+    avanzarOTareasKanban,
+    esRetroceso,
+    transicionesPermitidas,
+)
 from app.core.validador import (
     validarCedula,
     validarDatosTarea,
@@ -19,10 +24,13 @@ from app.core.validador import (
 
 __all__ = [
     "agregarPaqueteAProyecto",
+    "avanzarOTareasKanban",
     "calcularAvancePaquete",
     "calcularEstadoPaquete",
+    "esRetroceso",
     "obtenerTareasActivas",
     "renombrarPaquete",
+    "transicionesPermitidas",
     "validarCedula",
     "validarDatosTarea",
     "validarEliminacionIntegrante",
