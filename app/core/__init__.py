@@ -9,6 +9,8 @@ from app.core.edt import (
 )
 from app.core.kanban import (
     avanzarOTareasKanban,
+    descartarTareaLogicamente,
+    editarTarea,
     esRetroceso,
     transicionesPermitidas,
 )
@@ -27,6 +29,8 @@ __all__ = [
     "avanzarOTareasKanban",
     "calcularAvancePaquete",
     "calcularEstadoPaquete",
+    "descartarTareaLogicamente",
+    "editarTarea",
     "esRetroceso",
     "obtenerTareasActivas",
     "renombrarPaquete",

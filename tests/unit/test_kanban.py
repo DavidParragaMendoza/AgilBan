@@ -2,10 +2,12 @@
 
 from app.core.kanban import (
     avanzarOTareasKanban,
+    descartarTareaLogicamente,
+    editarTarea,
     esRetroceso,
     transicionesPermitidas,
 )
-from app.domain.catalogos import EstadoKanban
+from app.domain.catalogos import EstadoKanban, PrioridadTarea
 from app.domain.errores import ErrorTransicionKanban
 from app.domain.modelos import Tarea
 from app.domain.monadas import Alguno, Exito, Fallo, Ninguno
@@ -172,3 +174,128 @@ class TestMotorTransicionesKanban:
 
         assert isinstance(resultado, Fallo)
         assert isinstance(resultado.obtenerError(), ErrorTransicionKanban)
+
+
+class TestEdicionYDescarteKanban:
+    """Suite de pruebas para el descarte lógico y edición inmutable de tareas (Tarea 3.3)."""
+
+    def testDescartarTareaLogicamenteAsignaActivoFalso(self) -> None:
+        """UT-KAN-05: Retorna copia inmutable con activo = False preservando atributos e historial."""
+        tareaOriginal = Tarea(
+            idTarea="TAR-001",
+            idPaquete="PAQ-001",
+            titulo="Configurar CI/CD",
+            descripcion=Alguno("Configurar GitHub Actions"),
+            prioridad=PrioridadTarea.ALTA,
+            cedulaResponsable=Alguno("0912345678"),
+            fechaObjetivo=Alguno("2026-10-30"),
+            estado=EstadoKanban.EN_PROGRESO,
+            contadorRegresos=2,
+            activo=True,
+        )
+
+        tareaDescartada = descartarTareaLogicamente(tareaOriginal)
+
+        # Inmutabilidad: la original no cambia y es otra referencia
+        assert tareaDescartada is not tareaOriginal
+        assert tareaOriginal.activo is True
+
+        # Cambio esperado
+        assert tareaDescartada.activo is False
+
+        # Invarianza: todos los demás campos se mantienen idénticos
+        assert tareaDescartada.idTarea == tareaOriginal.idTarea
+        assert tareaDescartada.idPaquete == tareaOriginal.idPaquete
+        assert tareaDescartada.titulo == tareaOriginal.titulo
+        assert tareaDescartada.descripcion == tareaOriginal.descripcion
+        assert tareaDescartada.prioridad == tareaOriginal.prioridad
+        assert tareaDescartada.cedulaResponsable == tareaOriginal.cedulaResponsable
+        assert tareaDescartada.fechaObjetivo == tareaOriginal.fechaObjetivo
+        assert tareaDescartada.estado == tareaOriginal.estado
+        assert tareaDescartada.contadorRegresos == tareaOriginal.contadorRegresos
+        assert tareaDescartada.historial == tareaOriginal.historial
+
+    def testDescartarTareaYaInactiva(self) -> None:
+        """Verifica que descartar una tarea ya inactiva genera una copia con activo = False sin errores."""
+        tarea = Tarea(
+            idTarea="TAR-002",
+            idPaquete="PAQ-001",
+            titulo="Pruebas de carga",
+            activo=False,
+        )
+        descartada = descartarTareaLogicamente(tarea)
+        assert descartada.activo is False
+        assert descartada is not tarea
+
+    def testEditarTareaModificaCamposPermitidosInmutablemente(self) -> None:
+        """UT-KAN-06: Modifica atributos permitidos preservando ID, paquete, estado, contador e historial."""
+        tareaOriginal = Tarea(
+            idTarea="TAR-003",
+            idPaquete="PAQ-001",
+            titulo="Diseño de BD",
+            descripcion=Alguno("Crear script SQL inicial"),
+            prioridad=PrioridadTarea.MEDIA,
+            cedulaResponsable=Alguno("0912345678"),
+            fechaObjetivo=Alguno("2026-10-28"),
+            estado=EstadoKanban.EN_REVISION,
+            contadorRegresos=1,
+            activo=True,
+        )
+
+        tareaEditada = editarTarea(
+            tarea=tareaOriginal,
+            nuevoTitulo="Diseño de BD Relacional",
+            nuevaDesc=Alguno("Crear script DDL completo con índices"),
+            nuevaPrioridad=PrioridadTarea.CRITICA,
+            nuevoResp=Alguno("0987654321"),
+            nuevaFecha=Alguno("2026-10-31"),
+        )
+
+        # Inmutabilidad
+        assert tareaEditada is not tareaOriginal
+        assert tareaOriginal.titulo == "Diseño de BD"
+        assert tareaOriginal.prioridad == PrioridadTarea.MEDIA
+
+        # Atributos modificados
+        assert tareaEditada.titulo == "Diseño de BD Relacional"
+        assert tareaEditada.descripcion == Alguno(
+            "Crear script DDL completo con índices"
+        )
+        assert tareaEditada.prioridad == PrioridadTarea.CRITICA
+        assert tareaEditada.cedulaResponsable == Alguno("0987654321")
+        assert tareaEditada.fechaObjetivo == Alguno("2026-10-31")
+
+        # Invarianza: campos protegidos preservados
+        assert tareaEditada.idTarea == "TAR-003"
+        assert tareaEditada.idPaquete == "PAQ-001"
+        assert tareaEditada.estado == EstadoKanban.EN_REVISION
+        assert tareaEditada.contadorRegresos == 1
+        assert tareaEditada.activo is True
+        assert tareaEditada.historial == tareaOriginal.historial
+
+    def testEditarTareaVaciaCamposOpcionales(self) -> None:
+        """Permite limpiar campos opcionales pasando Ninguno() a descripción, responsable y fecha."""
+        tareaOriginal = Tarea(
+            idTarea="TAR-004",
+            idPaquete="PAQ-002",
+            titulo="Documentar API",
+            descripcion=Alguno("Escribir OpenAPI"),
+            prioridad=PrioridadTarea.ALTA,
+            cedulaResponsable=Alguno("0912345678"),
+            fechaObjetivo=Alguno("2026-11-01"),
+        )
+
+        tareaEditada = editarTarea(
+            tarea=tareaOriginal,
+            nuevoTitulo="Documentar API Swagger",
+            nuevaDesc=Ninguno(),
+            nuevaPrioridad=PrioridadTarea.BAJA,
+            nuevoResp=Ninguno(),
+            nuevaFecha=Ninguno(),
+        )
+
+        assert tareaEditada.titulo == "Documentar API Swagger"
+        assert tareaEditada.descripcion == Ninguno()
+        assert tareaEditada.prioridad == PrioridadTarea.BAJA
+        assert tareaEditada.cedulaResponsable == Ninguno()
+        assert tareaEditada.fechaObjetivo == Ninguno()

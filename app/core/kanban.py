@@ -12,7 +12,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import replace
 
-from app.domain.catalogos import EstadoKanban
+from app.domain.catalogos import EstadoKanban, PrioridadTarea
 from app.domain.errores import ErrorTransicionKanban
 from app.domain.modelos import Tarea, TransicionHistorial
 from app.domain.monadas import Alguno, Exito, Fallo, Opcion, Resultado
@@ -103,3 +103,27 @@ def avanzarOTareasKanban(
         historial=tarea.historial + (nuevaTransicion,),
     )
     return Exito(tareaActualizada)
+
+
+def descartarTareaLogicamente(tarea: Tarea) -> Tarea:
+    """Realiza el borrado lógico de una tarea en el tablero asignando inmutablemente activo = False."""
+    return replace(tarea, activo=False)
+
+
+def editarTarea(
+    tarea: Tarea,
+    nuevoTitulo: str,
+    nuevaDesc: Opcion[str],
+    nuevaPrioridad: PrioridadTarea,
+    nuevoResp: Opcion[str],
+    nuevaFecha: Opcion[str],
+) -> Tarea:
+    """Modifica los atributos editables de una tarea de forma inmutable, preservando identificadores, estado e historial."""
+    return replace(
+        tarea,
+        titulo=nuevoTitulo.strip(),
+        descripcion=nuevaDesc,
+        prioridad=nuevaPrioridad,
+        cedulaResponsable=nuevoResp,
+        fechaObjetivo=nuevaFecha,
+    )
