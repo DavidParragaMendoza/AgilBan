@@ -7,6 +7,12 @@ from app.core.edt import (
     obtenerTareasActivas,
     renombrarPaquete,
 )
+from app.core.filtros import (
+    crearCriterioFiltro,
+    filtrarTareas,
+    ordenarPorFecha,
+    ordenarPorPrioridad,
+)
 from app.core.kanban import (
     avanzarOTareasKanban,
     descartarTareaLogicamente,
@@ -29,10 +35,14 @@ __all__ = [
     "avanzarOTareasKanban",
     "calcularAvancePaquete",
     "calcularEstadoPaquete",
+    "crearCriterioFiltro",
     "descartarTareaLogicamente",
     "editarTarea",
     "esRetroceso",
+    "filtrarTareas",
     "obtenerTareasActivas",
+    "ordenarPorFecha",
+    "ordenarPorPrioridad",
     "renombrarPaquete",
     "transicionesPermitidas",
     "validarCedula",
