@@ -20,6 +20,12 @@ from app.core.kanban import (
     esRetroceso,
     transicionesPermitidas,
 )
+from app.core.metricas import (
+    auditarCuellosDeBotella,
+    calcularAvanceGlobal,
+    calcularCargaIntegrantes,
+    calcularResumenTareas,
+)
 from app.core.validador import (
     validarCedula,
     validarDatosTarea,
@@ -32,9 +38,13 @@ from app.core.validador import (
 
 __all__ = [
     "agregarPaqueteAProyecto",
+    "auditarCuellosDeBotella",
     "avanzarOTareasKanban",
+    "calcularAvanceGlobal",
     "calcularAvancePaquete",
+    "calcularCargaIntegrantes",
     "calcularEstadoPaquete",
+    "calcularResumenTareas",
     "crearCriterioFiltro",
     "descartarTareaLogicamente",
     "editarTarea",
