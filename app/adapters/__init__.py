@@ -6,6 +6,7 @@ from app.adapters.repositorioSqlite import (
     eliminarIntegrante,
     eliminarPaqueteVacio,
     guardarProyectoCompleto,
+    guardarTareaConHistorial,
     recuperarProyectos,
 )
 from app.adapters.telemetria import (
@@ -23,6 +24,7 @@ __all__ = [
     "eliminarIntegrante",
     "eliminarPaqueteVacio",
     "guardarProyectoCompleto",
+    "guardarTareaConHistorial",
     "inicializarEsquema",
     "limpiarHistorialTelemetria",
     "obtenerHistorialTelemetria",

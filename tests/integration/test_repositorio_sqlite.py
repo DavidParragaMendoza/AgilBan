@@ -8,14 +8,18 @@ from app.adapters.repositorioSqlite import (
     eliminarIntegrante,
     eliminarPaqueteVacio,
     guardarProyectoCompleto,
+    guardarTareaConHistorial,
     recuperarProyectos,
 )
+from app.core.kanban import avanzarOTareasKanban, descartarTareaLogicamente
 from app.domain.catalogos import (
     CargoIntegrante,
+    EstadoKanban,
+    PrioridadTarea,
     TipoProyecto,
 )
-from app.domain.modelos import Integrante, PaqueteTrabajo, Proyecto
-from app.domain.monadas import Exito, Fallo
+from app.domain.modelos import Integrante, PaqueteTrabajo, Proyecto, Tarea
+from app.domain.monadas import Alguno, Exito, Fallo, Ninguno
 
 
 class TestEsquemaSqlite:
@@ -279,3 +283,144 @@ class TestRepositorioProyectosIntegrantesPaquetes:
         # Ahora integrante1 es el único integrante restante; intentar eliminarlo debe fallar
         resFalloUnico = eliminarIntegrante(self.conexion, "0911111111", "PROY-004")
         assert isinstance(resFalloUnico, Fallo)
+
+
+class TestRepositorioTareasHistorialYBorradoLogico:
+    """Suite de integración para tareas, transiciones atómicas, historial y borrado lógico (Tarea 5.4)."""
+
+    def setup_method(self) -> None:
+        """Inicializa base de datos con proyecto base y paquete de trabajo."""
+        self.conexion = sqlite3.connect(":memory:")
+        inicializarEsquema(self.conexion)
+
+        proyecto = Proyecto(
+            idProyecto="PROY-KANBAN",
+            nombre="Tablero AgilBan",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(PaqueteTrabajo("PAQ-KANBAN", "PROY-KANBAN", "Core Kanban"),),
+            integrantes=(
+                Integrante(
+                    "0955555555",
+                    "PROY-KANBAN",
+                    "Deivy Anthony",
+                    CargoIntegrante.DESARROLLADOR_FULLSTACK,
+                ),
+            ),
+        )
+        guardarProyectoCompleto(self.conexion, proyecto)
+
+    def teardown_method(self) -> None:
+        """Cierra la conexión al finalizar la prueba."""
+        self.conexion.close()
+
+    def testIT_SQL_02_TransaccionalidadRollbackAnteFallos(self) -> None:
+        """IT-SQL-02: Transacción revierte completamente ante violación de clave foránea."""
+        tareaInvalida = Tarea(
+            idTarea="TAR-INVALIDA",
+            idPaquete="PAQ-INEXISTENTE",  # Clave foránea no existe
+            titulo="Tarea con paquete inválido",
+            prioridad=PrioridadTarea.ALTA,
+        )
+
+        resultado = guardarTareaConHistorial(self.conexion, tareaInvalida)
+        assert isinstance(resultado, Fallo)
+
+        # Verificamos que no se insertó nada en la base de datos (garantía de ROLLBACK)
+        cursor = self.conexion.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tareas WHERE id_tarea = 'TAR-INVALIDA'")
+        assert cursor.fetchone()[0] == 0
+
+    def testIT_SQL_03_BorradoLogicoPersistente(self) -> None:
+        """IT-SQL-03: Actualizar tarea a activo = False persiste activo = 0 sin borrar el registro."""
+        tareaInicial = Tarea(
+            idTarea="TAR-LOGICA",
+            idPaquete="PAQ-KANBAN",
+            titulo="Tarea para descarte",
+            prioridad=PrioridadTarea.MEDIA,
+            activo=True,
+        )
+        resGuardar = guardarTareaConHistorial(self.conexion, tareaInicial)
+        assert isinstance(resGuardar, Exito)
+
+        # Descartar lógicamente la tarea
+        tareaDescartada = descartarTareaLogicamente(tareaInicial)
+        assert tareaDescartada.activo is False
+
+        # Guardar tarea descartada
+        resDescarte = guardarTareaConHistorial(self.conexion, tareaDescartada)
+        assert isinstance(resDescarte, Exito)
+
+        # Comprobar en base de datos: la fila sigue existiendo con activo = 0
+        cursor = self.conexion.cursor()
+        cursor.execute("SELECT activo FROM tareas WHERE id_tarea = 'TAR-LOGICA'")
+        fila = cursor.fetchone()
+        assert fila is not None
+        assert fila[0] == 0
+
+        # Al recuperar por la jerarquía, la tarea debe reconstruirse con activo = False
+        proyectos = recuperarProyectos(self.conexion).obtenerValor()
+        tareaRecuperada = proyectos[0].paquetes[0].tareas[0]
+        assert tareaRecuperada.idTarea == "TAR-LOGICA"
+        assert tareaRecuperada.activo is False
+
+    def testIT_SQL_04_HistorialTransicionesConsecutivas(self) -> None:
+        """IT-SQL-04: Registrar 3 transiciones consecutivas y verificar persistencia y orden cronológico."""
+        tarea0 = Tarea(
+            idTarea="TAR-FLUJO",
+            idPaquete="PAQ-KANBAN",
+            titulo="Implementar flujo completo",
+            prioridad=PrioridadTarea.CRITICA,
+            estado=EstadoKanban.PENDIENTE,
+        )
+
+        # Transición 1: PENDIENTE -> EN_PROGRESO
+        resT1 = avanzarOTareasKanban(
+            tarea0, EstadoKanban.EN_PROGRESO, Ninguno(), "2026-10-24T20:00:00"
+        )
+        tarea1 = resT1.obtenerValor()
+
+        # Transición 2: EN_PROGRESO -> EN_REVISION
+        resT2 = avanzarOTareasKanban(
+            tarea1, EstadoKanban.EN_REVISION, Ninguno(), "2026-10-24T21:00:00"
+        )
+        tarea2 = resT2.obtenerValor()
+
+        # Transición 3: EN_REVISION -> EN_PROGRESO (retroceso justificado)
+        resT3 = avanzarOTareasKanban(
+            tarea2,
+            EstadoKanban.EN_PROGRESO,
+            Alguno("Falta cobertura de tests"),
+            "2026-10-24T22:00:00",
+        )
+        tarea3 = resT3.obtenerValor()
+        assert tarea3.contadorRegresos == 1
+
+        # Guardar la tarea con su historial acumulado
+        resGuardar = guardarTareaConHistorial(self.conexion, tarea3)
+        assert isinstance(resGuardar, Exito)
+
+        # Recuperar desde la base de datos y verificar que se reconstruya íntegramente
+        proyectos = recuperarProyectos(self.conexion).obtenerValor()
+        tareaBD = proyectos[0].paquetes[0].tareas[0]
+
+        assert tareaBD.idTarea == "TAR-FLUJO"
+        assert tareaBD.estado == EstadoKanban.EN_PROGRESO
+        assert tareaBD.contadorRegresos == 1
+        assert len(tareaBD.historial) == 3
+
+        # Verificar orden cronológico e invariantes de cada transición
+        tr1, tr2, tr3 = tareaBD.historial
+        assert tr1.estadoOrigen == EstadoKanban.PENDIENTE
+        assert tr1.estadoDestino == EstadoKanban.EN_PROGRESO
+        assert tr1.fechaHora == "2026-10-24T20:00:00"
+        assert tr1.comentario == Ninguno()
+
+        assert tr2.estadoOrigen == EstadoKanban.EN_PROGRESO
+        assert tr2.estadoDestino == EstadoKanban.EN_REVISION
+        assert tr2.fechaHora == "2026-10-24T21:00:00"
+        assert tr2.comentario == Ninguno()
+
+        assert tr3.estadoOrigen == EstadoKanban.EN_REVISION
+        assert tr3.estadoDestino == EstadoKanban.EN_PROGRESO
+        assert tr3.fechaHora == "2026-10-24T22:00:00"
+        assert tr3.comentario == Alguno("Falta cobertura de tests")

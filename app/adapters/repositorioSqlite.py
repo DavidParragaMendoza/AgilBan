@@ -362,3 +362,72 @@ def eliminarIntegrante(
         return Exito(None)
     except sqlite3.Error as error:
         return Fallo(f"Error al eliminar al integrante: {error}")
+
+
+@cronometrarOperacion(nombrePersonalizado="guardarTareaConHistorial")
+def guardarTareaConHistorial(
+    conexion: sqlite3.Connection,
+    tarea: Tarea,
+) -> Resultado[None, str]:
+    """Guarda o actualiza atómicamente una tarea y su historial de transiciones."""
+    try:
+        with conexion:
+            cursor = conexion.cursor()
+            descValor = (
+                tarea.descripcion.obtenerValor()
+                if tarea.descripcion.esAlguno()
+                else None
+            )
+            respValor = (
+                tarea.cedulaResponsable.obtenerValor()
+                if tarea.cedulaResponsable.esAlguno()
+                else None
+            )
+            fechaValor = (
+                tarea.fechaObjetivo.obtenerValor()
+                if tarea.fechaObjetivo.esAlguno()
+                else None
+            )
+
+            cursor.execute(
+                """INSERT OR REPLACE INTO tareas
+                   (id_tarea, id_paquete, titulo, descripcion, prioridad,
+                    cedula_responsable, fecha_objetivo, estado, contador_regresos, activo)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tarea.idTarea,
+                    tarea.idPaquete,
+                    tarea.titulo,
+                    descValor,
+                    tarea.prioridad.value,
+                    respValor,
+                    fechaValor,
+                    tarea.estado.value,
+                    tarea.contadorRegresos,
+                    1 if tarea.activo else 0,
+                ),
+            )
+
+            for trans in tarea.historial:
+                comentValor = (
+                    trans.comentario.obtenerValor()
+                    if trans.comentario.esAlguno()
+                    else None
+                )
+                cursor.execute(
+                    """INSERT OR REPLACE INTO historial_transiciones
+                       (id_transicion, id_tarea, estado_origen, estado_destino, fecha_hora, comentario)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        trans.idTransicion,
+                        trans.idTarea,
+                        trans.estadoOrigen.value,
+                        trans.estadoDestino.value,
+                        trans.fechaHora,
+                        comentValor,
+                    ),
+                )
+
+        return Exito(None)
+    except sqlite3.Error as error:
+        return Fallo(f"Error al guardar la tarea e historial: {error}")
