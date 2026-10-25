@@ -78,10 +78,20 @@ def guardarProyectoCompleto(
                     )
 
                     cursor.execute(
-                        """INSERT OR REPLACE INTO tareas
+                        """INSERT INTO tareas
                            (id_tarea, id_paquete, titulo, descripcion, prioridad,
                             cedula_responsable, fecha_objetivo, estado, contador_regresos, activo)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(id_tarea) DO UPDATE SET
+                               id_paquete = excluded.id_paquete,
+                               titulo = excluded.titulo,
+                               descripcion = excluded.descripcion,
+                               prioridad = excluded.prioridad,
+                               cedula_responsable = excluded.cedula_responsable,
+                               fecha_objetivo = excluded.fecha_objetivo,
+                               estado = excluded.estado,
+                               contador_regresos = excluded.contador_regresos,
+                               activo = excluded.activo""",
                         (
                             tarea.idTarea,
                             tarea.idPaquete,
@@ -103,9 +113,10 @@ def guardarProyectoCompleto(
                             else None
                         )
                         cursor.execute(
-                            """INSERT OR REPLACE INTO historial_transiciones
+                            """INSERT INTO historial_transiciones
                                (id_transicion, id_tarea, estado_origen, estado_destino, fecha_hora, comentario)
-                               VALUES (?, ?, ?, ?, ?, ?)""",
+                               VALUES (?, ?, ?, ?, ?, ?)
+                               ON CONFLICT(id_transicion) DO NOTHING""",
                             (
                                 trans.idTransicion,
                                 trans.idTarea,
@@ -390,10 +401,20 @@ def guardarTareaConHistorial(
             )
 
             cursor.execute(
-                """INSERT OR REPLACE INTO tareas
+                """INSERT INTO tareas
                    (id_tarea, id_paquete, titulo, descripcion, prioridad,
                     cedula_responsable, fecha_objetivo, estado, contador_regresos, activo)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(id_tarea) DO UPDATE SET
+                       id_paquete = excluded.id_paquete,
+                       titulo = excluded.titulo,
+                       descripcion = excluded.descripcion,
+                       prioridad = excluded.prioridad,
+                       cedula_responsable = excluded.cedula_responsable,
+                       fecha_objetivo = excluded.fecha_objetivo,
+                       estado = excluded.estado,
+                       contador_regresos = excluded.contador_regresos,
+                       activo = excluded.activo""",
                 (
                     tarea.idTarea,
                     tarea.idPaquete,
@@ -415,9 +436,10 @@ def guardarTareaConHistorial(
                     else None
                 )
                 cursor.execute(
-                    """INSERT OR REPLACE INTO historial_transiciones
+                    """INSERT INTO historial_transiciones
                        (id_transicion, id_tarea, estado_origen, estado_destino, fecha_hora, comentario)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(id_transicion) DO NOTHING""",
                     (
                         trans.idTransicion,
                         trans.idTarea,

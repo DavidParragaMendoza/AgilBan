@@ -2,6 +2,7 @@
 
 from app.ui.asistenteProyecto import ejecutarAsistenteCreacionProyecto
 from app.ui.consola import ejecutarMenuPrincipal, ejecutarMenuProyecto
+from app.ui.consolaKanban import ejecutarMenuKanban
 from app.ui.formateadores import (
     esTareaVencida,
     formatearListaTareas,
@@ -14,6 +15,7 @@ from app.ui.formateadores import (
 
 __all__ = [
     "ejecutarAsistenteCreacionProyecto",
+    "ejecutarMenuKanban",
     "ejecutarMenuPrincipal",
     "ejecutarMenuProyecto",
     "esTareaVencida",
