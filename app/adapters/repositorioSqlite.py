@@ -36,15 +36,21 @@ def guardarProyectoCompleto(
         with conexion:
             cursor = conexion.cursor()
             cursor.execute(
-                """INSERT OR REPLACE INTO proyectos (id_proyecto, nombre, tipo)
-                   VALUES (?, ?, ?)""",
+                """INSERT INTO proyectos (id_proyecto, nombre, tipo)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(id_proyecto) DO UPDATE SET
+                       nombre = excluded.nombre,
+                       tipo = excluded.tipo""",
                 (proyecto.idProyecto, proyecto.nombre, proyecto.tipo.value),
             )
 
             for integrante in proyecto.integrantes:
                 cursor.execute(
-                    """INSERT OR REPLACE INTO integrantes (cedula, id_proyecto, nombre, cargo)
-                       VALUES (?, ?, ?, ?)""",
+                    """INSERT INTO integrantes (cedula, id_proyecto, nombre, cargo)
+                       VALUES (?, ?, ?, ?)
+                       ON CONFLICT(cedula, id_proyecto) DO UPDATE SET
+                           nombre = excluded.nombre,
+                           cargo = excluded.cargo""",
                     (
                         integrante.cedula,
                         integrante.idProyecto,
@@ -55,8 +61,10 @@ def guardarProyectoCompleto(
 
             for paquete in proyecto.paquetes:
                 cursor.execute(
-                    """INSERT OR REPLACE INTO paquetes_trabajo (id_paquete, id_proyecto, nombre)
-                       VALUES (?, ?, ?)""",
+                    """INSERT INTO paquetes_trabajo (id_paquete, id_proyecto, nombre)
+                       VALUES (?, ?, ?)
+                       ON CONFLICT(id_paquete) DO UPDATE SET
+                           nombre = excluded.nombre""",
                     (paquete.idPaquete, paquete.idProyecto, paquete.nombre),
                 )
 
