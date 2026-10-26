@@ -11,6 +11,10 @@ from app.adapters.repositorioSqlite import (
     guardarTareaConHistorial,
     recuperarProyectos,
 )
+from app.adapters.telemetria import (
+    limpiarHistorialTelemetria,
+    obtenerHistorialTelemetria,
+)
 from app.core.kanban import avanzarOTareasKanban, descartarTareaLogicamente
 from app.domain.catalogos import (
     CargoIntegrante,
@@ -424,3 +428,16 @@ class TestRepositorioTareasHistorialYBorradoLogico:
         assert tr3.estadoDestino == EstadoKanban.EN_PROGRESO
         assert tr3.fechaHora == "2026-10-24T22:00:00"
         assert tr3.comentario == Alguno("Falta cobertura de tests")
+
+    def testIT_SQL_05_RendimientoYTelemetria(self) -> None:
+        """IT-SQL-05: Verificar telemetría y rendimiento (< 100 ms por operación en SQLite :memory:)."""
+        limpiarHistorialTelemetria()
+        for _ in range(50):
+            res = recuperarProyectos(self.conexion)
+            assert isinstance(res, Exito)
+
+        historial = obtenerHistorialTelemetria()
+        assert len(historial) >= 50
+        for registro in historial:
+            assert registro.duracionMs < 100.0
+            assert registro.exitosa is True
