@@ -1,5 +1,6 @@
 """Pruebas unitarias para el motor de transiciones Kanban y devoluciones en app/core/kanban.py."""
 
+from app.core import destinoRetroceso
 from app.core.kanban import (
     avanzarOTareasKanban,
     descartarTareaLogicamente,
@@ -42,6 +43,19 @@ class TestMotorTransicionesKanban:
         assert esRetroceso(EstadoKanban.PENDIENTE, EstadoKanban.EN_PROGRESO) is False
         assert esRetroceso(EstadoKanban.EN_PROGRESO, EstadoKanban.EN_REVISION) is False
         assert esRetroceso(EstadoKanban.EN_REVISION, EstadoKanban.TERMINADA) is False
+
+    def testDestinoRetrocesoDerivaDestinoUnicoDeCadaEstado(self) -> None:
+        """UT-KAN-06: Deriva solo el retroceso permitido y representa su ausencia."""
+        assert destinoRetroceso(EstadoKanban.EN_PROGRESO) == Alguno(
+            EstadoKanban.PENDIENTE
+        )
+        assert destinoRetroceso(EstadoKanban.EN_REVISION) == Alguno(
+            EstadoKanban.EN_PROGRESO
+        )
+        assert destinoRetroceso(EstadoKanban.TERMINADA) == Alguno(
+            EstadoKanban.EN_PROGRESO
+        )
+        assert destinoRetroceso(EstadoKanban.PENDIENTE) == Ninguno()
 
     def testAvanceLegalSecuencial(self) -> None:
         """UT-KAN-01: Permite el avance legal secuencial registrando transición en historial."""

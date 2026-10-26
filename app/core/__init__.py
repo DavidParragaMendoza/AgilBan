@@ -16,6 +16,7 @@ from app.core.filtros import (
 from app.core.kanban import (
     avanzarOTareasKanban,
     descartarTareaLogicamente,
+    destinoRetroceso,
     editarTarea,
     esRetroceso,
     transicionesPermitidas,
@@ -47,6 +48,7 @@ __all__ = [
     "calcularResumenTareas",
     "crearCriterioFiltro",
     "descartarTareaLogicamente",
+    "destinoRetroceso",
     "editarTarea",
     "esRetroceso",
     "filtrarTareas",

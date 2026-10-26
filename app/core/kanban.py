@@ -15,7 +15,7 @@ from dataclasses import replace
 from app.domain.catalogos import EstadoKanban, PrioridadTarea
 from app.domain.errores import ErrorTransicionKanban
 from app.domain.modelos import Tarea, TransicionHistorial
-from app.domain.monadas import Alguno, Exito, Fallo, Opcion, Resultado
+from app.domain.monadas import Alguno, Exito, Fallo, Ninguno, Opcion, Resultado
 
 
 def transicionesPermitidas(estadoActual: EstadoKanban) -> tuple[EstadoKanban, ...]:
@@ -42,6 +42,18 @@ def esRetroceso(origen: EstadoKanban, destino: EstadoKanban) -> bool:
             return True
         case _:
             return False
+
+
+def destinoRetroceso(estadoActual: EstadoKanban) -> Opcion[EstadoKanban]:
+    """Obtiene el único destino de retroceso permitido desde el estado actual."""
+    return next(
+        (
+            Alguno(destino)
+            for destino in transicionesPermitidas(estadoActual)
+            if esRetroceso(estadoActual, destino)
+        ),
+        Ninguno(),
+    )
 
 
 def avanzarOTareasKanban(
