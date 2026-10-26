@@ -31,6 +31,14 @@ class TransicionHistorial:
 
 
 @dataclass(frozen=True)
+class EventoCreacionTarea:
+    """Registro inmutable de la creación original de una tarea."""
+
+    idTarea: str
+    fechaHora: str
+
+
+@dataclass(frozen=True)
 class Tarea:
     """Entidad inmutable que representa una unidad de trabajo asignable."""
 
@@ -45,6 +53,7 @@ class Tarea:
     contadorRegresos: int = 0
     activo: bool = True
     historial: tuple[TransicionHistorial, ...] = ()
+    eventoCreacion: Opcion[EventoCreacionTarea] = field(default_factory=Ninguno)
 
 
 @dataclass(frozen=True)

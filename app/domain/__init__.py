@@ -16,6 +16,7 @@ from app.domain.errores import (
     ErrorValidacion,
 )
 from app.domain.modelos import (
+    EventoCreacionTarea,
     Integrante,
     PaqueteTrabajo,
     Proyecto,
@@ -35,6 +36,7 @@ __all__ = [
     "ErrorValidacion",
     "EstadoKanban",
     "EstadoPaquete",
+    "EventoCreacionTarea",
     "Exito",
     "Fallo",
     "Integrante",

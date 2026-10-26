@@ -11,6 +11,7 @@ from app.domain.catalogos import (
     TipoProyecto,
 )
 from app.domain.modelos import (
+    EventoCreacionTarea,
     Integrante,
     PaqueteTrabajo,
     Proyecto,
@@ -22,6 +23,18 @@ from app.domain.monadas import Alguno, Ninguno
 
 class TestModelosDominio:
     """Suite de pruebas para las entidades inmutables del dominio."""
+
+    def testCreacionEventoCreacionTareaInmutable(self) -> None:
+        """Verifica que el evento de creación conserva su ID y marca temporal."""
+        evento = EventoCreacionTarea(
+            idTarea="TAR-001",
+            fechaHora="2026-10-26T07:30:00",
+        )
+
+        assert evento.idTarea == "TAR-001"
+        assert evento.fechaHora == "2026-10-26T07:30:00"
+        with pytest.raises(FrozenInstanceError):
+            evento.fechaHora = "2026-10-26T08:00:00"  # type: ignore
 
     def testCreacionTransicionHistorial(self) -> None:
         """Verifica la instanciación de TransicionHistorial con comentario opcional."""
@@ -55,6 +68,23 @@ class TestModelosDominio:
         assert tarea.estado == EstadoKanban.PENDIENTE
         assert tarea.contadorRegresos == 0
         assert tarea.activo is True
+        assert tarea.historial == ()
+        assert tarea.eventoCreacion == Ninguno()
+
+    def testTareaConEventoCreacionYSinTransicionInicial(self) -> None:
+        """Verifica que una tarea nueva conserva el evento sin inventar transición."""
+        evento = EventoCreacionTarea(
+            idTarea="TAR-001",
+            fechaHora="2026-10-26T07:30:00",
+        )
+        tarea = Tarea(
+            idTarea="TAR-001",
+            idPaquete="PAQ-001",
+            titulo="Configurar base de datos",
+            eventoCreacion=Alguno(evento),
+        )
+
+        assert tarea.eventoCreacion == Alguno(evento)
         assert tarea.historial == ()
 
     def testCreacionPaqueteTrabajoEIntegrante(self) -> None:
