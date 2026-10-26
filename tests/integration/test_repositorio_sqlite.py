@@ -55,8 +55,15 @@ class TestEsquemaSqlite:
             "paquetes_trabajo",
             "tareas",
             "historial_transiciones",
+            "historial_creaciones",
+            "secuencia_tareas",
         }
         assert tablasEsperadas.issubset(tablasCreadas)
+
+        cursor.execute(
+            "SELECT nombre, ultimo_valor FROM secuencia_tareas WHERE nombre = 'tareas';"
+        )
+        assert cursor.fetchone() == ("tareas", 0)
 
         cursor.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%' ORDER BY name;"
@@ -69,6 +76,126 @@ class TestEsquemaSqlite:
         }
         assert indicesEsperados == indicesCreados
 
+        conexion.close()
+
+    def testEstructuraHistorialCreacionesYClaveUnica(self) -> None:
+        """Verifica la forma del registro de creación, su clave única y la referencia a tareas."""
+        conexion = sqlite3.connect(":memory:")
+        resultado = inicializarEsquema(conexion)
+        assert isinstance(resultado, Exito)
+        cursor = conexion.cursor()
+
+        cursor.execute("PRAGMA table_info(historial_creaciones);")
+        columnasEvento = {fila[1] for fila in cursor.fetchall()}
+        assert columnasEvento == {"id_tarea", "fecha_hora", "clave_solicitud"}
+
+        cursor.execute("PRAGMA index_list(historial_creaciones);")
+        indicesEvento = cursor.fetchall()
+        assert any(fila[2] == 1 for fila in indicesEvento)
+
+        cursor.execute("PRAGMA foreign_key_list(historial_creaciones);")
+        clavesForaneas = cursor.fetchall()
+        assert any(fila[2] == "tareas" and fila[3] == "id_tarea" for fila in clavesForaneas)
+        conexion.close()
+
+    def testMigrarEsquemaExistentePreservaDatosYInicializaSecuenciaGlobal(self) -> None:
+        """Migra una base legacy sin alterar IDs ni fabricar eventos de creación."""
+        conexion = sqlite3.connect(":memory:")
+        conexion.executescript(
+            """
+            CREATE TABLE proyectos (
+                id_proyecto TEXT PRIMARY KEY,
+                nombre TEXT NOT NULL UNIQUE,
+                tipo TEXT NOT NULL
+            );
+            CREATE TABLE paquetes_trabajo (
+                id_paquete TEXT PRIMARY KEY,
+                id_proyecto TEXT NOT NULL,
+                nombre TEXT NOT NULL,
+                UNIQUE (id_proyecto, nombre),
+                FOREIGN KEY (id_proyecto) REFERENCES proyectos(id_proyecto)
+            );
+            CREATE TABLE tareas (
+                id_tarea TEXT PRIMARY KEY,
+                id_paquete TEXT NOT NULL,
+                titulo TEXT NOT NULL,
+                descripcion TEXT,
+                prioridad TEXT NOT NULL,
+                cedula_responsable TEXT,
+                fecha_objetivo TEXT,
+                estado TEXT NOT NULL DEFAULT 'Pendiente',
+                contador_regresos INTEGER NOT NULL DEFAULT 0,
+                activo INTEGER NOT NULL DEFAULT 1,
+                FOREIGN KEY (id_paquete) REFERENCES paquetes_trabajo(id_paquete)
+            );
+            CREATE TABLE historial_transiciones (
+                id_transicion TEXT PRIMARY KEY,
+                id_tarea TEXT NOT NULL,
+                estado_origen TEXT NOT NULL,
+                estado_destino TEXT NOT NULL,
+                fecha_hora TEXT NOT NULL,
+                comentario TEXT,
+                FOREIGN KEY (id_tarea) REFERENCES tareas(id_tarea)
+            );
+            INSERT INTO proyectos VALUES ('PROY-LEGACY', 'Proyecto legacy', 'Desarrollo Web');
+            INSERT INTO paquetes_trabajo VALUES ('PAQ-LEGACY', 'PROY-LEGACY', 'Paquete legacy');
+            INSERT INTO tareas (id_tarea, id_paquete, titulo, prioridad) VALUES
+                ('TAR-007', 'PAQ-LEGACY', 'Tarea correlativa', 'Media'),
+                ('TAR-120-extra', 'PAQ-LEGACY', 'Tarea correlativa extendida', 'Alta'),
+                ('TAR-99', 'PAQ-LEGACY', 'ID con menos de tres dígitos', 'Baja'),
+                ('TAR-ABC', 'PAQ-LEGACY', 'ID no numérico', 'Media'),
+                ('LEG-999', 'PAQ-LEGACY', 'ID de otro formato', 'Media');
+            INSERT INTO historial_transiciones VALUES (
+                'TRN-LEGACY',
+                'TAR-007',
+                'Pendiente',
+                'En progreso',
+                '2026-10-24T10:00:00',
+                NULL
+            );
+            """
+        )
+
+        resultado = inicializarEsquema(conexion)
+        assert isinstance(resultado, Exito)
+
+        cursor = conexion.cursor()
+        cursor.execute(
+            "SELECT id_tarea FROM tareas ORDER BY id_tarea;"
+        )
+        assert {fila[0] for fila in cursor.fetchall()} == {
+            "TAR-007",
+            "TAR-120-extra",
+            "TAR-99",
+            "TAR-ABC",
+            "LEG-999",
+        }
+
+        cursor.execute(
+            "SELECT id_transicion FROM historial_transiciones;"
+        )
+        assert cursor.fetchall() == [("TRN-LEGACY",)]
+
+        cursor.execute("SELECT COUNT(*) FROM historial_creaciones;")
+        assert cursor.fetchone() == (0,)
+
+        cursor.execute(
+            "SELECT ultimo_valor FROM secuencia_tareas WHERE nombre = 'tareas';"
+        )
+        assert cursor.fetchone() == (120,)
+
+        cursor.execute(
+            "UPDATE secuencia_tareas SET ultimo_valor = 125 WHERE nombre = 'tareas';"
+        )
+        conexion.commit()
+
+        resultadoRepetido = inicializarEsquema(conexion)
+        assert isinstance(resultadoRepetido, Exito)
+
+        cursor.execute(
+            "SELECT ultimo_valor FROM secuencia_tareas WHERE nombre = 'tareas';"
+        )
+        assert cursor.fetchone() == (125,)
         conexion.close()
 
     def testClavesForaneasActivadasYRestriccion(self) -> None:

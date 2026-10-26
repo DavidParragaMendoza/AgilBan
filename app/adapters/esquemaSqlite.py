@@ -7,6 +7,7 @@ para garantizar la persistencia atómica y el borrado lógico.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from app.adapters.telemetria import cronometrarOperacion
@@ -62,10 +63,24 @@ CREATE TABLE IF NOT EXISTS historial_transiciones (
     FOREIGN KEY (id_tarea) REFERENCES tareas(id_tarea) ON DELETE RESTRICT
 );
 
+CREATE TABLE IF NOT EXISTS historial_creaciones (
+    id_tarea TEXT PRIMARY KEY,
+    fecha_hora TEXT NOT NULL,
+    clave_solicitud TEXT NOT NULL UNIQUE,
+    FOREIGN KEY (id_tarea) REFERENCES tareas(id_tarea) ON DELETE RESTRICT
+);
+
+CREATE TABLE IF NOT EXISTS secuencia_tareas (
+    nombre TEXT PRIMARY KEY,
+    ultimo_valor INTEGER NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_tareas_paquete ON tareas(id_paquete);
 CREATE INDEX IF NOT EXISTS idx_tareas_activo ON tareas(activo);
 CREATE INDEX IF NOT EXISTS idx_historial_tarea ON historial_transiciones(id_tarea);
 """
+
+PATRON_ID_TAREA_CORRELATIVO = re.compile(r"^TAR-(\d{3,})")
 
 
 @cronometrarOperacion(nombrePersonalizado="inicializarEsquema")
@@ -74,6 +89,25 @@ def inicializarEsquema(conexion: sqlite3.Connection) -> Resultado[None, str]:
     try:
         conexion.execute("PRAGMA foreign_keys = ON;")
         conexion.executescript(DDL_ESQUEMA)
+        with conexion:
+            cursor = conexion.cursor()
+            cursor.execute("SELECT id_tarea FROM tareas;")
+            idsTareas = (fila[0] for fila in cursor.fetchall())
+            mayorCorrelativo = max(
+                (
+                    int(coincidencia.group(1))
+                    for idTarea in idsTareas
+                    if (coincidencia := PATRON_ID_TAREA_CORRELATIVO.match(idTarea))
+                ),
+                default=0,
+            )
+            cursor.execute(
+                """INSERT INTO secuencia_tareas (nombre, ultimo_valor)
+                   VALUES ('tareas', ?)
+                   ON CONFLICT(nombre) DO UPDATE SET
+                       ultimo_valor = MAX(secuencia_tareas.ultimo_valor, excluded.ultimo_valor)""",
+                (mayorCorrelativo,),
+            )
         return Exito(None)
     except sqlite3.Error as error:
         return Fallo(f"Error al inicializar el esquema SQLite: {error}")
