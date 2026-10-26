@@ -12,7 +12,12 @@ from app.adapters.repositorioSqlite import (
     recuperarProyectos,
 )
 from app.core.edt import obtenerTareasActivas
-from app.core.kanban import avanzarOTareasKanban, esRetroceso, transicionesPermitidas
+from app.core.kanban import (
+    avanzarOTareasKanban,
+    destinoRetroceso,
+    esRetroceso,
+    transicionesPermitidas,
+)
 from app.core.validador import validarDatosTarea
 from app.domain.catalogos import PrioridadTarea
 from app.domain.modelos import (
@@ -179,25 +184,45 @@ def moverEstadoTarea(
         )
         return
 
-    emisor(f"\nTransiciones permitidas desde '{tarea.estado.value}':")
-    for idx, destino in enumerate(transiciones, 1):
-        tipoTrans = (
-            "Devolución / Retroceso" if esRetroceso(tarea.estado, destino) else "Avance"
-        )
-        emisor(f"  {idx}. Mover a '{destino.value}' ({tipoTrans})")
+    avances = tuple(
+        destino for destino in transiciones if not esRetroceso(tarea.estado, destino)
+    )
+    destinoDevolucion = destinoRetroceso(tarea.estado)
 
-    selDestino = lector(
-        "\nSeleccione el estado de destino (o '0' para cancelar): "
-    ).strip()
+    emisor(f"\nAcciones permitidas desde '{tarea.estado.value}':")
+    for idx, destino in enumerate(avances, 1):
+        emisor(f"  {idx}. Avanzar a '{destino.value}'")
+
+    opcionDevolucion: Alguno[int] | Ninguno = Ninguno()
+    match destinoDevolucion:
+        case Alguno(destino):
+            emisor(f"El destino automático de devolución es '{destino.value}'.")
+            opcionDevolucion = Alguno(len(avances) + 1)
+            emisor(f"  {opcionDevolucion.valor}. Devolver automáticamente")
+        case Ninguno():
+            pass
+
+    selDestino = lector("\nSeleccione la acción (o '0' para cancelar): ").strip()
     if (
         selDestino == "0"
         or not selDestino.isdigit()
-        or not (1 <= int(selDestino) <= len(transiciones))
+        or not (
+            1
+            <= int(selDestino)
+            <= len(avances) + (1 if opcionDevolucion.esAlguno() else 0)
+        )
     ):
         return
 
-    nuevoEstado = transiciones[int(selDestino) - 1]
-    retroceso = esRetroceso(tarea.estado, nuevoEstado)
+    seleccion = int(selDestino)
+    match (opcionDevolucion, destinoDevolucion):
+        case (Alguno(indice), Alguno(destino)) if seleccion == indice:
+            nuevoEstado = destino
+            retroceso = True
+        case _:
+            nuevoEstado = avances[seleccion - 1]
+            retroceso = False
+
     comentarioOpcion: Alguno[str] | Ninguno = Ninguno()
 
     if retroceso:
@@ -207,8 +232,11 @@ def moverEstadoTarea(
         )
         while True:
             justificacion = lector(
-                "Ingrese el motivo / justificación de la devolución: "
+                "Ingrese el motivo / justificación de la devolución (o '0' para cancelar): "
             ).strip()
+            if justificacion == "0" or justificacion.lower() == "cancelar":
+                emisor("Devolución cancelada; no se modificó la tarea.")
+                return
             if not justificacion:
                 emisor(
                     "⚠️  El comentario de justificación para la devolución es obligatorio (máx. 300 caracteres)."

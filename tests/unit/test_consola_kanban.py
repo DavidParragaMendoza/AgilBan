@@ -4,6 +4,8 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import replace
 
+import pytest
+
 from app.adapters.esquemaSqlite import inicializarEsquema
 from app.adapters.repositorioSqlite import (
     guardarProyectoCompleto,
@@ -226,6 +228,100 @@ def testTransicionRetrocesoExigeJustificacion() -> None:
         for h in t.historial
         if isinstance(h.comentario, Alguno)
     )
+
+
+@pytest.mark.parametrize(
+    ("estadoInicial", "opcionDevolucion", "destino"),
+    [
+        (EstadoKanban.EN_PROGRESO, "2", EstadoKanban.PENDIENTE),
+        (EstadoKanban.EN_REVISION, "2", EstadoKanban.EN_PROGRESO),
+        (EstadoKanban.TERMINADA, "1", EstadoKanban.EN_PROGRESO),
+    ],
+)
+def testDevolucionUsaDestinoAutomatico(
+    estadoInicial: EstadoKanban,
+    opcionDevolucion: str,
+    destino: EstadoKanban,
+) -> None:
+    con, proy = configurarProyectoEnMemoria()
+    tarea = Tarea(
+        "TAR-001",
+        "PAQ-001",
+        "Revisar entrega",
+        estado=estadoInicial,
+    )
+    guardarTareaConHistorial(con, tarea)
+    mensajes: list[str] = []
+    solicitudes: list[str] = []
+    respuestas = iter(
+        ["1", "1", "1", opcionDevolucion, "Faltan correcciones", "0", "0"]
+    )
+
+    def lector(prompt: str) -> str:
+        solicitudes.append(prompt)
+        return next(respuestas, "0")
+
+    ejecutarMenuKanban(
+        con,
+        proy.idProyecto,
+        lector=lector,
+        emisor=mensajes.append,
+    )
+
+    assert any(destino.value in mensaje for mensaje in mensajes)
+    assert not any("estado de destino" in prompt.lower() for prompt in solicitudes)
+    resultado = recuperarProyectos(con)
+    assert isinstance(resultado, Exito)
+    tareaActualizada = resultado.valor[0].paquetes[0].tareas[0]
+    assert tareaActualizada.estado == destino
+    assert tareaActualizada.contadorRegresos == 1
+    assert tareaActualizada.historial[-1].comentario == Alguno("Faltan correcciones")
+
+
+def testPendienteNoOfreceDevolucion() -> None:
+    con, proy = configurarProyectoEnMemoria()
+    tarea = Tarea("TAR-001", "PAQ-001", "Iniciar trabajo")
+    guardarTareaConHistorial(con, tarea)
+    mensajes: list[str] = []
+
+    ejecutarMenuKanban(
+        con,
+        proy.idProyecto,
+        lector=crearLectorSimulado(["1", "1", "1", "0", "0", "0"]),
+        emisor=mensajes.append,
+    )
+
+    assert not any("Devolución automática" in mensaje for mensaje in mensajes)
+    resultado = recuperarProyectos(con)
+    assert isinstance(resultado, Exito)
+    tareaSinCambios = resultado.valor[0].paquetes[0].tareas[0]
+    assert tareaSinCambios.estado == EstadoKanban.PENDIENTE
+    assert tareaSinCambios.historial == ()
+
+
+def testCancelarJustificacionNoModificaTareaNiHistorial() -> None:
+    con, proy = configurarProyectoEnMemoria()
+    tarea = Tarea(
+        "TAR-001", "PAQ-001", "Revisar trabajo", estado=EstadoKanban.EN_PROGRESO
+    )
+    guardarTareaConHistorial(con, tarea)
+    mensajes: list[str] = []
+
+    ejecutarMenuKanban(
+        con,
+        proy.idProyecto,
+        lector=crearLectorSimulado(["1", "1", "1", "2", "x" * 301, "0", "0", "0"]),
+        emisor=mensajes.append,
+    )
+
+    assert any("cancel" in mensaje.lower() for mensaje in mensajes)
+    assert any("superar los 300" in mensaje.lower() for mensaje in mensajes)
+    resultado = recuperarProyectos(con)
+    assert isinstance(resultado, Exito)
+    tareaSinCambios = resultado.valor[0].paquetes[0].tareas[0]
+    assert tareaSinCambios.estado == EstadoKanban.EN_PROGRESO
+    assert tareaSinCambios.contadorRegresos == 0
+    assert tareaSinCambios.historial == ()
 
 
 def testVerDetalleTareaEHistorial() -> None:
