@@ -64,7 +64,9 @@ def testAsistenteCreacionExitosa() -> None:
         proyecto, proyecto.paquetes[0].idPaquete, "Arquitectura Backend"
     )
     assert isinstance(resultadoRenombrado, Exito)
-    assert resultadoRenombrado.obtenerValor().paquetes[0].nombre == "Arquitectura Backend"
+    assert (
+        resultadoRenombrado.obtenerValor().paquetes[0].nombre == "Arquitectura Backend"
+    )
     assert len(proyecto.integrantes) == 2
     assert proyecto.integrantes[0].cedula == "0955555555"
     assert proyecto.integrantes[0].nombre == "Javier Infante"

@@ -102,7 +102,9 @@ class TestEsquemaSqlite:
 
         cursor.execute("PRAGMA foreign_key_list(historial_creaciones);")
         clavesForaneas = cursor.fetchall()
-        assert any(fila[2] == "tareas" and fila[3] == "id_tarea" for fila in clavesForaneas)
+        assert any(
+            fila[2] == "tareas" and fila[3] == "id_tarea" for fila in clavesForaneas
+        )
         conexion.close()
 
     def testMigrarEsquemaExistentePreservaDatosYInicializaSecuenciaGlobal(self) -> None:
@@ -167,9 +169,7 @@ class TestEsquemaSqlite:
         assert isinstance(resultado, Exito)
 
         cursor = conexion.cursor()
-        cursor.execute(
-            "SELECT id_tarea FROM tareas ORDER BY id_tarea;"
-        )
+        cursor.execute("SELECT id_tarea FROM tareas ORDER BY id_tarea;")
         assert {fila[0] for fila in cursor.fetchall()} == {
             "TAR-007",
             "TAR-120-extra",
@@ -178,9 +178,7 @@ class TestEsquemaSqlite:
             "LEG-999",
         }
 
-        cursor.execute(
-            "SELECT id_transicion FROM historial_transiciones;"
-        )
+        cursor.execute("SELECT id_transicion FROM historial_transiciones;")
         assert cursor.fetchall() == [("TRN-LEGACY",)]
 
         cursor.execute("SELECT COUNT(*) FROM historial_creaciones;")
