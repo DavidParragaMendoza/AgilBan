@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from app.adapters.esquemaSqlite import PATRON_ID_TAREA_CORRELATIVO
 from app.adapters.telemetria import cronometrarOperacion
 from app.domain.catalogos import (
     CargoIntegrante,
@@ -17,13 +18,16 @@ from app.domain.catalogos import (
     TipoProyecto,
 )
 from app.domain.modelos import (
+    EventoCreacionTarea,
     Integrante,
     PaqueteTrabajo,
     Proyecto,
     Tarea,
     TransicionHistorial,
 )
-from app.domain.monadas import Alguno, Exito, Fallo, Ninguno, Resultado
+from app.domain.monadas import Alguno, Exito, Fallo, Ninguno, Opcion, Resultado
+
+_OPCION_TEXTO_AUSENTE = Ninguno()
 
 
 @cronometrarOperacion(nombrePersonalizado="guardarProyectoCompleto")
@@ -229,6 +233,23 @@ def recuperarProyectos(
                         for idTr, idTarTr, estOrig, estDest, fHora, coment in filasHistorial
                     )
 
+                    cursor.execute(
+                        """SELECT fecha_hora FROM historial_creaciones
+                           WHERE id_tarea = ?""",
+                        (idTar,),
+                    )
+                    filaEventoCreacion = cursor.fetchone()
+                    eventoCreacion = (
+                        Alguno(
+                            EventoCreacionTarea(
+                                idTarea=idTar,
+                                fechaHora=filaEventoCreacion[0],
+                            )
+                        )
+                        if filaEventoCreacion is not None
+                        else Ninguno()
+                    )
+
                     tarea = Tarea(
                         idTarea=idTar,
                         idPaquete=idPaqTar,
@@ -247,6 +268,7 @@ def recuperarProyectos(
                         contadorRegresos=regTar,
                         activo=bool(actTar),
                         historial=historial,
+                        eventoCreacion=eventoCreacion,
                     )
                     listaTareas.append(tarea)
 
@@ -270,6 +292,142 @@ def recuperarProyectos(
         return Exito(tuple(listaProyectos))
     except (sqlite3.Error, ValueError) as error:
         return Fallo(f"Error al recuperar los proyectos: {error}")
+
+
+@cronometrarOperacion(nombrePersonalizado="crearTareaConHistorial")
+def crearTareaConHistorial(
+    conexion: sqlite3.Connection,
+    idPaquete: str,
+    titulo: str,
+    timestamp: str,
+    claveSolicitud: str,
+    descripcion: Opcion[str] = _OPCION_TEXTO_AUSENTE,
+    prioridad: PrioridadTarea = PrioridadTarea.MEDIA,
+    cedulaResponsable: Opcion[str] = _OPCION_TEXTO_AUSENTE,
+    fechaObjetivo: Opcion[str] = _OPCION_TEXTO_AUSENTE,
+) -> Resultado[Tarea, str]:
+    """Crea una tarea con ID global y evento de creación atómicamente e idempotentemente."""
+    if not claveSolicitud.strip():
+        return Fallo("La clave de solicitud para crear una tarea no puede estar vacía.")
+    if not timestamp.strip():
+        return Fallo("La fecha y hora de creación de la tarea no puede estar vacía.")
+
+    try:
+        with conexion:
+            cursor = conexion.cursor()
+            cursor.execute("BEGIN IMMEDIATE;")
+            cursor.execute(
+                """SELECT id_tarea FROM historial_creaciones
+                   WHERE clave_solicitud = ?""",
+                (claveSolicitud,),
+            )
+            filaExistente = cursor.fetchone()
+            if filaExistente is not None:
+                resultadoRecuperacion = recuperarProyectos(conexion)
+                if isinstance(resultadoRecuperacion, Fallo):
+                    return Fallo(resultadoRecuperacion.obtenerError())
+
+                idExistente = filaExistente[0]
+                tareaExistente = next(
+                    (
+                        tarea
+                        for proyecto in resultadoRecuperacion.obtenerValor()
+                        for paquete in proyecto.paquetes
+                        for tarea in paquete.tareas
+                        if tarea.idTarea == idExistente
+                    ),
+                    None,
+                )
+                if tareaExistente is None:
+                    return Fallo(
+                        "La clave de solicitud existe, pero su tarea asociada no se encontró."
+                    )
+                return Exito(tareaExistente)
+
+            cursor.execute("SELECT id_tarea FROM tareas;")
+            idsTareas = (fila[0] for fila in cursor.fetchall())
+            mayorCorrelativo = max(
+                (
+                    int(coincidencia.group(1))
+                    for idTarea in idsTareas
+                    if (coincidencia := PATRON_ID_TAREA_CORRELATIVO.match(idTarea))
+                ),
+                default=0,
+            )
+            cursor.execute(
+                """UPDATE secuencia_tareas
+                   SET ultimo_valor = MAX(ultimo_valor, ?)
+                   WHERE nombre = 'tareas'""",
+                (mayorCorrelativo,),
+            )
+            if cursor.rowcount == 0:
+                return Fallo(
+                    "La secuencia global de tareas no está inicializada; ejecute inicializarEsquema."
+                )
+
+            cursor.execute(
+                """UPDATE secuencia_tareas
+                   SET ultimo_valor = ultimo_valor + 1
+                   WHERE nombre = 'tareas'"""
+            )
+            cursor.execute(
+                "SELECT ultimo_valor FROM secuencia_tareas WHERE nombre = 'tareas';"
+            )
+            nuevoCorrelativo = cursor.fetchone()[0]
+            idTarea = f"TAR-{nuevoCorrelativo:03d}"
+            eventoCreacion = EventoCreacionTarea(
+                idTarea=idTarea,
+                fechaHora=timestamp,
+            )
+            tarea = Tarea(
+                idTarea=idTarea,
+                idPaquete=idPaquete,
+                titulo=titulo,
+                descripcion=descripcion,
+                prioridad=prioridad,
+                cedulaResponsable=cedulaResponsable,
+                fechaObjetivo=fechaObjetivo,
+                estado=EstadoKanban.PENDIENTE,
+                contadorRegresos=0,
+                activo=True,
+                eventoCreacion=Alguno(eventoCreacion),
+            )
+            cursor.execute(
+                """INSERT INTO tareas
+                   (id_tarea, id_paquete, titulo, descripcion, prioridad,
+                    cedula_responsable, fecha_objetivo, estado, contador_regresos, activo)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tarea.idTarea,
+                    tarea.idPaquete,
+                    tarea.titulo,
+                    tarea.descripcion.obtenerValor()
+                    if tarea.descripcion.esAlguno()
+                    else None,
+                    tarea.prioridad.value,
+                    tarea.cedulaResponsable.obtenerValor()
+                    if tarea.cedulaResponsable.esAlguno()
+                    else None,
+                    tarea.fechaObjetivo.obtenerValor()
+                    if tarea.fechaObjetivo.esAlguno()
+                    else None,
+                    tarea.estado.value,
+                    tarea.contadorRegresos,
+                    1 if tarea.activo else 0,
+                ),
+            )
+            cursor.execute(
+                """INSERT INTO historial_creaciones
+                   (id_tarea, fecha_hora, clave_solicitud)
+                   VALUES (?, ?, ?)""",
+                (idTarea, timestamp, claveSolicitud),
+            )
+
+        return Exito(tarea)
+    except sqlite3.Error as error:
+        if conexion.in_transaction:
+            conexion.rollback()
+        return Fallo(f"Error al crear la tarea con historial: {error}")
 
 
 @cronometrarOperacion(nombrePersonalizado="actualizarNombrePaquete")

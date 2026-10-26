@@ -2,6 +2,7 @@
 
 import sqlite3
 
+from app.adapters import crearTareaConHistorial
 from app.adapters.esquemaSqlite import DDL_ESQUEMA, inicializarEsquema
 from app.adapters.repositorioSqlite import (
     actualizarNombrePaquete,
@@ -22,7 +23,13 @@ from app.domain.catalogos import (
     PrioridadTarea,
     TipoProyecto,
 )
-from app.domain.modelos import Integrante, PaqueteTrabajo, Proyecto, Tarea
+from app.domain.modelos import (
+    EventoCreacionTarea,
+    Integrante,
+    PaqueteTrabajo,
+    Proyecto,
+    Tarea,
+)
 from app.domain.monadas import Alguno, Exito, Fallo, Ninguno
 
 
@@ -443,6 +450,254 @@ class TestRepositorioTareasHistorialYBorradoLogico:
     def teardown_method(self) -> None:
         """Cierra la conexión al finalizar la prueba."""
         self.conexion.close()
+
+    def testCrearTareaAsignaIdGlobalYEventoSinTransicionFicticia(self) -> None:
+        """Guarda una creación con ID global y evento separado del historial Kanban."""
+        resultado = crearTareaConHistorial(
+            conexion=self.conexion,
+            idPaquete="PAQ-KANBAN",
+            titulo="Primera tarea",
+            timestamp="2026-10-26T13:00:00",
+            claveSolicitud="solicitud-001",
+        )
+
+        assert isinstance(resultado, Exito)
+        tarea = resultado.obtenerValor()
+        assert tarea.idTarea == "TAR-001"
+        assert tarea.estado == EstadoKanban.PENDIENTE
+        assert tarea.prioridad == PrioridadTarea.MEDIA
+        assert tarea.contadorRegresos == 0
+        assert tarea.activo is True
+        assert tarea.eventoCreacion == Alguno(
+            EventoCreacionTarea(
+                idTarea="TAR-001",
+                fechaHora="2026-10-26T13:00:00",
+            )
+        )
+        assert tarea.historial == ()
+
+    def testCrearTareaUsaSecuenciaGlobalYFormatoSinLimiteDeTresDigitos(self) -> None:
+        """Continúa el correlativo desde los IDs existentes y no trunca al superar 999."""
+        cursor = self.conexion.cursor()
+        cursor.execute(
+            """INSERT INTO tareas (id_tarea, id_paquete, titulo, prioridad)
+               VALUES ('TAR-999', 'PAQ-KANBAN', 'Tarea histórica', 'Media')"""
+        )
+        cursor.execute(
+            """INSERT INTO tareas (id_tarea, id_paquete, titulo, prioridad)
+               VALUES ('LEG-2000', 'PAQ-KANBAN', 'Otro formato', 'Media')"""
+        )
+        self.conexion.commit()
+
+        resultado = crearTareaConHistorial(
+            conexion=self.conexion,
+            idPaquete="PAQ-KANBAN",
+            titulo="Tarea correlativa siguiente",
+            descripcion=Ninguno(),
+            prioridad=PrioridadTarea.MEDIA,
+            cedulaResponsable=Ninguno(),
+            fechaObjetivo=Ninguno(),
+            timestamp="2026-10-26T13:05:00",
+            claveSolicitud="solicitud-1000",
+        )
+
+        assert isinstance(resultado, Exito)
+        assert resultado.obtenerValor().idTarea == "TAR-1000"
+
+    def testCrearTareaMantieneSecuenciaGlobalEntrePaquetes(self) -> None:
+        """Comparte el mismo correlativo al crear tareas en paquetes distintos."""
+        proyecto = Proyecto(
+            idProyecto="PROY-KANBAN",
+            nombre="Tablero AgilBan",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(
+                PaqueteTrabajo("PAQ-KANBAN", "PROY-KANBAN", "Core Kanban"),
+                PaqueteTrabajo("PAQ-OTRO", "PROY-KANBAN", "Otro paquete"),
+            ),
+            integrantes=(
+                Integrante(
+                    "0955555555",
+                    "PROY-KANBAN",
+                    "Deivy Anthony",
+                    CargoIntegrante.DESARROLLADOR_FULLSTACK,
+                ),
+            ),
+        )
+        resultadoGuardar = guardarProyectoCompleto(self.conexion, proyecto)
+        assert isinstance(resultadoGuardar, Exito)
+
+        resultadoPrimero = crearTareaConHistorial(
+            conexion=self.conexion,
+            idPaquete="PAQ-KANBAN",
+            titulo="Tarea del primer paquete",
+            timestamp="2026-10-26T13:06:00",
+            claveSolicitud="solicitud-paquete-1",
+        )
+        resultadoSegundo = crearTareaConHistorial(
+            conexion=self.conexion,
+            idPaquete="PAQ-OTRO",
+            titulo="Tarea del segundo paquete",
+            timestamp="2026-10-26T13:07:00",
+            claveSolicitud="solicitud-paquete-2",
+        )
+
+        assert isinstance(resultadoPrimero, Exito)
+        assert isinstance(resultadoSegundo, Exito)
+        assert resultadoPrimero.obtenerValor().idTarea == "TAR-001"
+        assert resultadoSegundo.obtenerValor().idTarea == "TAR-002"
+
+    def testCrearTareaIdempotenteNoDuplicaNiConsumeSecuencia(self) -> None:
+        """Una misma clave retorna la tarea existente y no reserva otro ID."""
+        argumentos = {
+            "conexion": self.conexion,
+            "idPaquete": "PAQ-KANBAN",
+            "titulo": "Solicitud repetida",
+            "descripcion": Alguno("Descripción original"),
+            "prioridad": PrioridadTarea.ALTA,
+            "cedulaResponsable": Ninguno(),
+            "fechaObjetivo": Ninguno(),
+            "timestamp": "2026-10-26T13:10:00",
+            "claveSolicitud": "solicitud-reintentada",
+        }
+        primerResultado = crearTareaConHistorial(**argumentos)
+        segundoResultado = crearTareaConHistorial(
+            **{**argumentos, "titulo": "Contenido del reintento"}
+        )
+
+        assert isinstance(primerResultado, Exito)
+        assert isinstance(segundoResultado, Exito)
+        assert segundoResultado.obtenerValor() == primerResultado.obtenerValor()
+        assert segundoResultado.obtenerValor().titulo == "Solicitud repetida"
+
+        cursor = self.conexion.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tareas;")
+        assert cursor.fetchone() == (1,)
+        cursor.execute("SELECT COUNT(*) FROM historial_creaciones;")
+        assert cursor.fetchone() == (1,)
+        cursor.execute(
+            "SELECT ultimo_valor FROM secuencia_tareas WHERE nombre = 'tareas';"
+        )
+        assert cursor.fetchone() == (1,)
+
+        siguienteResultado = crearTareaConHistorial(
+            conexion=self.conexion,
+            idPaquete="PAQ-KANBAN",
+            titulo="Tarea posterior",
+            descripcion=Ninguno(),
+            prioridad=PrioridadTarea.MEDIA,
+            cedulaResponsable=Ninguno(),
+            fechaObjetivo=Ninguno(),
+            timestamp="2026-10-26T13:11:00",
+            claveSolicitud="solicitud-posterior",
+        )
+        assert isinstance(siguienteResultado, Exito)
+        assert siguienteResultado.obtenerValor().idTarea == "TAR-002"
+
+    def testCrearTareaRollbackNoConsumeCorrelativo(self) -> None:
+        """Un fallo durante el guardado del evento revierte tarea, evento y secuencia."""
+        self.conexion.execute(
+            """CREATE TRIGGER rechazar_evento_creacion
+               BEFORE INSERT ON historial_creaciones
+               BEGIN
+                   SELECT RAISE(ABORT, 'fallo inducido al guardar evento');
+               END;"""
+        )
+        self.conexion.commit()
+
+        resultadoFallido = crearTareaConHistorial(
+            conexion=self.conexion,
+            idPaquete="PAQ-KANBAN",
+            titulo="Tarea cuyo evento falla",
+            descripcion=Ninguno(),
+            prioridad=PrioridadTarea.MEDIA,
+            cedulaResponsable=Ninguno(),
+            fechaObjetivo=Ninguno(),
+            timestamp="2026-10-26T13:15:00",
+            claveSolicitud="solicitud-fallida",
+        )
+
+        assert isinstance(resultadoFallido, Fallo)
+        cursor = self.conexion.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tareas;")
+        assert cursor.fetchone() == (0,)
+        cursor.execute("SELECT COUNT(*) FROM historial_creaciones;")
+        assert cursor.fetchone() == (0,)
+        cursor.execute(
+            "SELECT ultimo_valor FROM secuencia_tareas WHERE nombre = 'tareas';"
+        )
+        assert cursor.fetchone() == (0,)
+        self.conexion.execute("DROP TRIGGER rechazar_evento_creacion;")
+        self.conexion.commit()
+
+        resultadoCorrecto = crearTareaConHistorial(
+            conexion=self.conexion,
+            idPaquete="PAQ-KANBAN",
+            titulo="Primera tarea válida",
+            descripcion=Ninguno(),
+            prioridad=PrioridadTarea.MEDIA,
+            cedulaResponsable=Ninguno(),
+            fechaObjetivo=Ninguno(),
+            timestamp="2026-10-26T13:16:00",
+            claveSolicitud="solicitud-correcta",
+        )
+        assert isinstance(resultadoCorrecto, Exito)
+        assert resultadoCorrecto.obtenerValor().idTarea == "TAR-001"
+
+    def testGuardarYRecuperarProyectoConservaEventoYLegacySinEvento(self) -> None:
+        """Conserva el evento confirmado y representa una tarea legacy sin evento."""
+        resultadoCreacion = crearTareaConHistorial(
+            conexion=self.conexion,
+            idPaquete="PAQ-KANBAN",
+            titulo="Tarea nueva",
+            descripcion=Ninguno(),
+            prioridad=PrioridadTarea.MEDIA,
+            cedulaResponsable=Ninguno(),
+            fechaObjetivo=Ninguno(),
+            timestamp="2026-10-26T13:20:00",
+            claveSolicitud="solicitud-con-evento",
+        )
+        assert isinstance(resultadoCreacion, Exito)
+        tareaNueva = resultadoCreacion.obtenerValor()
+
+        tareaLegacy = Tarea(
+            idTarea="LEGACY-001",
+            idPaquete="PAQ-KANBAN",
+            titulo="Tarea sin evento histórico",
+        )
+        proyecto = Proyecto(
+            idProyecto="PROY-KANBAN",
+            nombre="Tablero AgilBan",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(
+                PaqueteTrabajo(
+                    idPaquete="PAQ-KANBAN",
+                    idProyecto="PROY-KANBAN",
+                    nombre="Core Kanban",
+                    tareas=(tareaNueva, tareaLegacy),
+                ),
+            ),
+            integrantes=(
+                Integrante(
+                    "0955555555",
+                    "PROY-KANBAN",
+                    "Deivy Anthony",
+                    CargoIntegrante.DESARROLLADOR_FULLSTACK,
+                ),
+            ),
+        )
+        resultadoGuardar = guardarProyectoCompleto(self.conexion, proyecto)
+        assert isinstance(resultadoGuardar, Exito)
+
+        resultadoRecuperacion = recuperarProyectos(self.conexion)
+        assert isinstance(resultadoRecuperacion, Exito)
+        tareas = {
+            tarea.idTarea: tarea
+            for paquete in resultadoRecuperacion.obtenerValor()[0].paquetes
+            for tarea in paquete.tareas
+        }
+        assert tareas["TAR-001"].eventoCreacion == tareaNueva.eventoCreacion
+        assert tareas["TAR-001"].historial == ()
+        assert tareas["LEGACY-001"].eventoCreacion == Ninguno()
 
     def testIT_SQL_02_TransaccionalidadRollbackAnteFallos(self) -> None:
         """IT-SQL-02: Transacción revierte completamente ante violación de clave foránea."""
