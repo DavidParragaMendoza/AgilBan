@@ -7,7 +7,6 @@ from collections.abc import Callable
 from app.core.validador import (
     validarCedula,
     validarNombreIntegrante,
-    validarNombrePaquete,
     validarNombreProyecto,
 )
 from app.domain.catalogos import CargoIntegrante, TipoProyecto
@@ -124,25 +123,15 @@ def ejecutarAsistenteCreacionProyecto(
     if cantPaquetes is None:
         return Fallo("Operación cancelada por el usuario.")
 
-    listaPaquetes: list[PaqueteTrabajo] = []
-    nombresPaquetesExistentes: list[str] = []
-
-    for idx in range(1, cantPaquetes + 1):
-        while True:
-            entrada = lector(f"Nombre del paquete #{idx}: ").strip()
-            if entrada.lower() == "cancelar":
-                return Fallo("Operación cancelada por el usuario.")
-            valPaq = validarNombrePaquete(entrada, tuple(nombresPaquetesExistentes))
-            match valPaq:
-                case Exito(nombrePaqValido):
-                    idPaquete = generadorIdPaquete(idx)
-                    listaPaquetes.append(
-                        PaqueteTrabajo(idPaquete, idProyecto, nombrePaqValido, ())
-                    )
-                    nombresPaquetesExistentes.append(nombrePaqValido)
-                    break
-                case Fallo(err):
-                    emisor(f"⚠️  {err.mensaje}")
+    listaPaquetes = [
+        PaqueteTrabajo(
+            idPaquete=generadorIdPaquete(idx),
+            idProyecto=idProyecto,
+            nombre=f"Paquete {idx}",
+            tareas=(),
+        )
+        for idx in range(1, cantPaquetes + 1)
+    ]
 
     # 4. Integrantes iniciales del equipo
     emisor("\n--- Configuración del Equipo de Integrantes ---")

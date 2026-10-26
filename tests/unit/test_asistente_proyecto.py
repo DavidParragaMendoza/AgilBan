@@ -2,7 +2,8 @@
 
 from collections.abc import Callable
 
-from app.domain.catalogos import CargoIntegrante, TipoProyecto
+from app.core.edt import calcularEstadoPaquete, renombrarPaquete
+from app.domain.catalogos import CargoIntegrante, EstadoPaquete, TipoProyecto
 from app.domain.modelos import Proyecto
 from app.domain.monadas import Exito, Fallo
 from app.ui.asistenteProyecto import ejecutarAsistenteCreacionProyecto
@@ -27,8 +28,6 @@ def testAsistenteCreacionExitosa() -> None:
         "Sistema de Gestión Hospitalaria",  # Nombre
         "1",  # Tipo: Desarrollo Web
         "2",  # Cantidad de paquetes iniciales
-        "Arquitectura Backend",  # Nombre Paquete 1
-        "Interfaz de Usuario",  # Nombre Paquete 2
         "2",  # Cantidad de integrantes iniciales
         "0955555555",  # Cédula 1
         "Javier Infante",  # Nombre 1
@@ -53,8 +52,19 @@ def testAsistenteCreacionExitosa() -> None:
     assert proyecto.nombre == "Sistema de Gestión Hospitalaria"
     assert proyecto.tipo == TipoProyecto.DESARROLLO_WEB
     assert len(proyecto.paquetes) == 2
-    assert proyecto.paquetes[0].nombre == "Arquitectura Backend"
-    assert proyecto.paquetes[1].nombre == "Interfaz de Usuario"
+    assert [paquete.nombre for paquete in proyecto.paquetes] == [
+        "Paquete 1",
+        "Paquete 2",
+    ]
+    assert all(
+        calcularEstadoPaquete(paquete) == EstadoPaquete.SIN_TAREAS
+        for paquete in proyecto.paquetes
+    )
+    resultadoRenombrado = renombrarPaquete(
+        proyecto, proyecto.paquetes[0].idPaquete, "Arquitectura Backend"
+    )
+    assert isinstance(resultadoRenombrado, Exito)
+    assert resultadoRenombrado.obtenerValor().paquetes[0].nombre == "Arquitectura Backend"
     assert len(proyecto.integrantes) == 2
     assert proyecto.integrantes[0].cedula == "0955555555"
     assert proyecto.integrantes[0].nombre == "Javier Infante"
@@ -70,7 +80,6 @@ def testAsistenteReintentaNombreDuplicadoYVacio() -> None:
         "Proyecto Nuevo y Valido",  # Nombre válido
         "2",  # Tipo: Aplicación Móvil
         "1",  # 1 paquete
-        "Modulo Principal",
         "1",  # 1 integrante
         "0911111111",
         "Ana Maria",
@@ -97,7 +106,6 @@ def testAsistenteReintentaCedulaInvalidaYDuplicada() -> None:
         "Proyecto Movil",
         "2",  # Móvil
         "1",  # 1 paquete
-        "Core App",
         "2",  # 2 integrantes
         "123",  # Cédula inválida (no tiene 10 dígitos)
         "0987654321",  # Cédula 1 válida
