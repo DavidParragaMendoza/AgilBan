@@ -2,6 +2,7 @@
 
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 
 from app.adapters.esquemaSqlite import inicializarEsquema
 from app.adapters.repositorioSqlite import (
@@ -61,6 +62,18 @@ def configurarProyectoEnMemoria() -> tuple[sqlite3.Connection, Proyecto]:
 def testAltaRapidaTareaEnKanban() -> None:
     """Verifica que la opción de alta rápida registre una nueva tarea en el tablero y SQLite."""
     con, proy = configurarProyectoEnMemoria()
+    paqueteConTareaExistente = PaqueteTrabajo(
+        "PAQ-002",
+        proy.idProyecto,
+        "Sprint 2",
+        (Tarea("TAR-009", "PAQ-002", "Tarea previa"),),
+    )
+    proy = replace(
+        proy,
+        paquetes=(*proy.paquetes, paqueteConTareaExistente),
+    )
+    guardarProyectoCompleto(con, proy)
+
     entradas = [
         "1",  # Seleccionar Paquete 1 (Sprint 1)
         "2",  # Opción Alta Rápida de Tarea
@@ -89,9 +102,15 @@ def testAltaRapidaTareaEnKanban() -> None:
     pRecup = res.valor[0]
     tareas = pRecup.paquetes[0].tareas
     assert len(tareas) == 1
+    assert tareas[0].idTarea == "TAR-010"
     assert tareas[0].titulo == "Crear Endpoint de Login"
     assert tareas[0].estado == EstadoKanban.PENDIENTE
     assert tareas[0].contadorRegresos == 0
+    assert tareas[0].activo is True
+    assert tareas[0].historial == ()
+    assert tareas[0].eventoCreacion.esAlguno()
+    assert tareas[0].eventoCreacion.obtenerValor().idTarea == "TAR-010"
+    assert tareas[0].eventoCreacion.obtenerValor().fechaHora
 
 
 def testTransicionAvanceSinJustificacion() -> None:

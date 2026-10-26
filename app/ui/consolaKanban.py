@@ -6,17 +6,20 @@ import sqlite3
 import uuid
 from collections.abc import Callable
 
-from app.adapters.repositorioSqlite import guardarTareaConHistorial, recuperarProyectos
+from app.adapters.repositorioSqlite import (
+    crearTareaConHistorial,
+    guardarTareaConHistorial,
+    recuperarProyectos,
+)
 from app.core.edt import obtenerTareasActivas
 from app.core.kanban import avanzarOTareasKanban, esRetroceso, transicionesPermitidas
 from app.core.validador import validarDatosTarea
-from app.domain.catalogos import EstadoKanban, PrioridadTarea
+from app.domain.catalogos import PrioridadTarea
 from app.domain.modelos import (
     Integrante,
     PaqueteTrabajo,
     Proyecto,
     Tarea,
-    TransicionHistorial,
 )
 from app.domain.monadas import Alguno, Exito, Fallo, Ninguno
 from app.ui.formateadores import formatearTableroKanban, obtenerNombreResponsable
@@ -125,39 +128,21 @@ def registrarAltaRapidaTarea(
         case Exito(_):
             pass
 
-    # Generar ID y transición inicial
-    totalTareasExistentes = len(paquete.tareas)
-    idTarea = f"TAR-{totalTareasExistentes + 1:03d}-{uuid.uuid4().hex[:3].upper()}"
-    marcaTiempo = obtenerMarcaTiempoActual()
-
-    transInicial = TransicionHistorial(
-        idTransicion=str(uuid.uuid4()),
-        idTarea=idTarea,
-        estadoOrigen=EstadoKanban.PENDIENTE,
-        estadoDestino=EstadoKanban.PENDIENTE,
-        fechaHora=marcaTiempo,
-        comentario=Ninguno(),
-    )
-
-    nuevaTarea = Tarea(
-        idTarea=idTarea,
+    resCrear = crearTareaConHistorial(
+        conexion=conexion,
         idPaquete=paquete.idPaquete,
         titulo=titulo,
         descripcion=descripcion,
         prioridad=prioridad,
         cedulaResponsable=responsable,
         fechaObjetivo=fechaObjetivo,
-        estado=EstadoKanban.PENDIENTE,
-        contadorRegresos=0,
-        activo=True,
-        historial=(transInicial,),
+        timestamp=obtenerMarcaTiempoActual(),
+        claveSolicitud=uuid.uuid4().hex,
     )
-
-    resGuardar = guardarTareaConHistorial(conexion, nuevaTarea)
-    match resGuardar:
-        case Exito(_):
+    match resCrear:
+        case Exito(tareaCreada):
             emisor(
-                f"\n🎉 ¡Tarea [{nuevaTarea.idTarea}] '{nuevaTarea.titulo}' guardada exitosamente en el paquete!"
+                f"\n🎉 ¡Tarea [{tareaCreada.idTarea}] '{tareaCreada.titulo}' guardada exitosamente en el paquete!"
             )
         case Fallo(err):
             emisor(f"❌ Error al guardar la tarea en base de datos: {err}")
