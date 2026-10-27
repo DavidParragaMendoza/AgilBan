@@ -12,7 +12,6 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, replace
 from datetime import datetime
-from enum import Enum
 from typing import Any
 
 from reactpy import component, html, use_state
@@ -32,6 +31,7 @@ from app.core.edt import (
 )
 from app.core.kanban import (
     avanzarOTareasKanban,
+    descartarTareaLogicamente,
     destinoRetroceso,
 )
 from app.domain.catalogos import EstadoKanban
@@ -49,15 +49,8 @@ from app.ui.web.estilos import (
 from app.ui.web.inicio import vistaInicio
 from app.ui.web.modalProyecto import modalCreacionProyecto
 from app.ui.web.modalRegreso import modalRegresoKanban
+from app.ui.web.panelEdicionTarea import EstadoGuardado, panelEdicionTarea
 from app.ui.web.tableroKanban import tableroKanban
-
-
-class EstadoGuardado(Enum):
-    """Estado explicito del proceso de autoguardado en el panel lateral."""
-
-    GUARDANDO = "Guardando…"
-    GUARDADO = "✓ Guardado"
-    ERROR = "No se pudo guardar"
 
 
 @dataclass(frozen=True)
@@ -214,6 +207,42 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
                 setBorradorTarea(Alguno(nuevaTarea))
                 setEstadoGuardado(EstadoGuardado.GUARDADO)
                 forzarActualizacion()
+
+    def guardarParcialTareaWorkspace(tareaActualizada: Tarea) -> None:
+        setEstadoGuardado(EstadoGuardado.GUARDANDO)
+        if conexion is not None:
+            res = guardarTareaConHistorial(conexion, tareaActualizada)
+            if res.esExito():
+                setTareaEnEdicion(Alguno(tareaActualizada))
+                setBorradorTarea(Alguno(tareaActualizada))
+                setEstadoGuardado(EstadoGuardado.GUARDADO)
+            else:
+                setEstadoGuardado(EstadoGuardado.ERROR)
+        else:
+            setTareaEnEdicion(Alguno(tareaActualizada))
+            setBorradorTarea(Alguno(tareaActualizada))
+            setEstadoGuardado(EstadoGuardado.GUARDADO)
+        forzarActualizacion()
+
+    def descartarTareaWorkspace(tareaADescartar: Tarea) -> None:
+        tareaDescartada = descartarTareaLogicamente(tareaADescartar)
+        if conexion is not None:
+            res = guardarTareaConHistorial(conexion, tareaDescartada)
+            if res.esExito():
+                setTareaEnEdicion(_castOpcion(Ninguno(), Tarea))
+                setBorradorTarea(_castOpcion(Ninguno(), Tarea))
+                setEstadoGuardado(EstadoGuardado.GUARDADO)
+                forzarActualizacion()
+        else:
+            setTareaEnEdicion(_castOpcion(Ninguno(), Tarea))
+            setBorradorTarea(_castOpcion(Ninguno(), Tarea))
+            forzarActualizacion()
+
+    def cerrarDrawerTareaWorkspace() -> None:
+        setTareaEnEdicion(_castOpcion(Ninguno(), Tarea))
+        setBorradorTarea(_castOpcion(Ninguno(), Tarea))
+        setEstadoGuardado(EstadoGuardado.GUARDADO)
+        setCierrePendiente(False)
 
     # -------------------------------------------------------------------------
     # 3. Renderizado de la Barra Superior de Navegacion
@@ -715,13 +744,13 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
     def renderizarSuperposiciones() -> Any:
         superposiciones: list[Any] = []
 
-        if modalCreacionAbierto:
-            proyectosActuales: tuple[Proyecto, ...] = ()
-            if conexion is not None:
-                resRecuperacion = recuperarProyectos(conexion)
-                if resRecuperacion.esExito():
-                    proyectosActuales = resRecuperacion.obtenerValor()
+        proyectosActuales: tuple[Proyecto, ...] = ()
+        if conexion is not None:
+            resRecuperacion = recuperarProyectos(conexion)
+            if resRecuperacion.esExito():
+                proyectosActuales = resRecuperacion.obtenerValor()
 
+        if modalCreacionAbierto:
             superposiciones.append(
                 modalCreacionProyecto(
                     alCerrar=cerrarModalNuevoProyecto,
@@ -737,6 +766,48 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
                     tarea=tareaRetroceso,
                     alConfirmar=confirmarDevolucionWorkspace,
                     alCancelar=cancelarDevolucionWorkspace,
+                )
+            )
+
+        if tareaEnEdicion.esAlguno():
+            tareaActual = tareaEnEdicion.obtenerValor()
+            proyectoActivo: Proyecto | None = None
+            if idProyectoActivo.esAlguno():
+                proyectoActivo = next(
+                    (
+                        p
+                        for p in proyectosActuales
+                        if p.idProyecto == idProyectoActivo.obtenerValor()
+                    ),
+                    None,
+                )
+            if proyectoActivo is None and len(proyectosActuales) > 0:
+                proyectoActivo = proyectosActuales[0]
+
+            nombrePaq = "Paquete EDT"
+            integrantesActivos: tuple[Integrante, ...] = ()
+            if proyectoActivo is not None:
+                integrantesActivos = proyectoActivo.integrantes
+                paq = next(
+                    (
+                        p
+                        for p in proyectoActivo.paquetes
+                        if p.idPaquete == tareaActual.idPaquete
+                    ),
+                    None,
+                )
+                if paq is not None:
+                    nombrePaq = paq.nombre
+
+            superposiciones.append(
+                panelEdicionTarea(
+                    tarea=tareaActual,
+                    nombrePaquete=nombrePaq,
+                    integrantes=integrantesActivos,
+                    alGuardarParcial=guardarParcialTareaWorkspace,
+                    alDescartarTarea=descartarTareaWorkspace,
+                    alCerrar=cerrarDrawerTareaWorkspace,
+                    estadoGuardado=estadoGuardado,
                 )
             )
 
@@ -787,6 +858,9 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
         confirmarDevolucionWorkspace,
         cancelarDevolucionWorkspace,
         crearTareaWorkspace,
+        guardarParcialTareaWorkspace,
+        descartarTareaWorkspace,
+        cerrarDrawerTareaWorkspace,
     )
     if len(_manejadoresAcciones) == 0:
         pass

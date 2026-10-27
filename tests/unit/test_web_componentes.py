@@ -31,7 +31,7 @@ from app.domain.modelos import (
     Proyecto,
     Tarea,
 )
-from app.domain.monadas import Alguno
+from app.domain.monadas import Alguno, Ninguno
 from app.ui.web.app import componenteApp
 from app.ui.web.barraLateral import (
     barraLateralEdt,
@@ -57,6 +57,7 @@ from app.ui.web.modalProyecto import (
     validarFormularioProyecto,
 )
 from app.ui.web.modalRegreso import modalRegresoKanban
+from app.ui.web.panelEdicionTarea import EstadoGuardado, panelEdicionTarea
 from app.ui.web.tableroKanban import tableroKanban
 from app.ui.web.tarjetaTarea import tarjetaTarea
 
@@ -2149,3 +2150,537 @@ class TestTableroKanban:
             tareaDb.historial[0].comentario.obtenerValor()
             == "Revisión técnica solicitada por QA"
         )
+
+
+class TestPanelEdicionTareaSideDrawer:
+    """Suite de pruebas unitarias para el Side Drawer de Edición, Autoguardado y Descarte (Bloque 5)."""
+
+    def testDrawerRenderizaCamposMetadatosYCronologia(self) -> None:
+        """Verifica UT-WEB-06: Muestra ID, paquete, estado actual, campos y cronología con evento de creación."""
+        from reactpy.core.layout import Layout
+
+        from app.domain.modelos import EventoCreacionTarea, TransicionHistorial
+
+        evCreacion = EventoCreacionTarea(
+            idTarea="TAR-200",
+            fechaHora="2026-10-27T08:30:00",
+        )
+        transicion1 = TransicionHistorial(
+            idTransicion="TR-1",
+            idTarea="TAR-200",
+            estadoOrigen=EstadoKanban.PENDIENTE,
+            estadoDestino=EstadoKanban.EN_PROGRESO,
+            fechaHora="2026-10-27T09:00:00",
+        )
+        transicion2 = TransicionHistorial(
+            idTransicion="TR-2",
+            idTarea="TAR-200",
+            estadoOrigen=EstadoKanban.EN_PROGRESO,
+            estadoDestino=EstadoKanban.PENDIENTE,
+            fechaHora="2026-10-27T09:15:00",
+            comentario=Alguno("Faltan especificaciones funcionales"),
+        )
+        tarea = Tarea(
+            idTarea="TAR-200",
+            idPaquete="PAQ-200",
+            titulo="Configurar Gateway",
+            descripcion=Alguno("Rutas y rate limiting"),
+            prioridad=PrioridadTarea.ALTA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=1,
+            activo=True,
+            historial=(transicion1, transicion2),
+            eventoCreacion=Alguno(evCreacion),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                panelEdicionTarea(
+                    tarea=tarea,
+                    nombrePaquete="Infraestructura Cloud",
+                    integrantes=(),
+                    alGuardarParcial=lambda t: None,
+                    alDescartarTarea=lambda t: None,
+                    alCerrar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "panel-edicion-tarea-drawer") is not None
+        assert _contieneTexto(modelo, "TAR-200")
+        assert _contieneTexto(modelo, "Infraestructura Cloud")
+        assert _contieneTexto(modelo, "Pendiente")
+        assert _buscarPorId(modelo, "evento-creacion-tarea-drawer") is not None
+        assert _contieneTexto(modelo, "2026-10-27T08:30:00")
+        assert _contieneTexto(modelo, "Faltan especificaciones funcionales")
+
+    def testDrawerTareaLegacySinEventoCreacion(self) -> None:
+        """Verifica EARS-06.2: Tarea heredada/legacy no inventa eventos ni fechas de creación."""
+        from reactpy.core.layout import Layout
+
+        tareaLegacy = Tarea(
+            idTarea="TAR-LEGACY-01",
+            idPaquete="PAQ-200",
+            titulo="Tarea Histórica Antigua",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+            eventoCreacion=Ninguno(),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                panelEdicionTarea(
+                    tarea=tareaLegacy,
+                    nombrePaquete="Módulo Legado",
+                    integrantes=(),
+                    alGuardarParcial=lambda t: None,
+                    alDescartarTarea=lambda t: None,
+                    alCerrar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "evento-creacion-tarea-drawer") is None
+        assert _buscarPorId(modelo, "evento-creacion-legacy-drawer") is not None
+        assert _contieneTexto(modelo, "Registro histórico heredado")
+
+    def testProteccionCierreSinCambiosCierraDirecto(self) -> None:
+        """Verifica que cerrar con '✕' sin cambios pendientes cierre inmediatamente (EARS-06.5)."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-201",
+            idPaquete="PAQ-200",
+            titulo="Tarea Estable",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        cerrados: list[bool] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                panelEdicionTarea(
+                    tarea=tarea,
+                    nombrePaquete="General",
+                    integrantes=(),
+                    alGuardarParcial=lambda t: None,
+                    alDescartarTarea=lambda t: None,
+                    alCerrar=lambda: cerrados.append(True),
+                    estadoGuardado=EstadoGuardado.GUARDADO,
+                )
+            ) as layout:
+                update = await layout.render()
+                btnCerrar = _buscarPorId(update["model"], "btn-cerrar-drawer-tarea")
+                assert btnCerrar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnCerrar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(cerrados) == 1
+
+    def testProteccionCierreConCambiosMuestraAdvertencia(self) -> None:
+        """Verifica que ante cambios no guardados se advierta al usuario antes de cerrar."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-202",
+            idPaquete="PAQ-200",
+            titulo="Tarea Con Borrador",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        cerrados: list[bool] = []
+
+        async def interactuar() -> Any:
+            async with Layout(
+                panelEdicionTarea(
+                    tarea=tarea,
+                    nombrePaquete="General",
+                    integrantes=(),
+                    alGuardarParcial=lambda t: None,
+                    alDescartarTarea=lambda t: None,
+                    alCerrar=lambda: cerrados.append(True),
+                    estadoGuardado=EstadoGuardado.ERROR,  # simula fallo de persistencia
+                )
+            ) as layout:
+                update = await layout.render()
+                btnCerrar = _buscarPorId(update["model"], "btn-cerrar-drawer-tarea")
+                assert btnCerrar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnCerrar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                update2 = await layout.render()
+                assert (
+                    _buscarPorId(update2["model"], "advertencia-cierre-drawer")
+                    is not None
+                )
+                assert len(cerrados) == 0
+
+                # Descartar y cerrar explícitamente
+                btnDescartarYCerrar = _buscarPorId(
+                    update2["model"], "btn-descartar-borrador-cerrar"
+                )
+                assert btnDescartarYCerrar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnDescartarYCerrar["eventHandlers"]["onClick"][
+                            "target"
+                        ],
+                        "data": [{}],
+                    }
+                )
+                return update2["model"]
+
+        asyncio.run(interactuar())
+        assert len(cerrados) == 1
+
+    def testAutoguardadoOnBlurTitulo(self) -> None:
+        """Verifica autoguardado on_blur para título con validación 1-120 caracteres (EARS-06.3)."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-203",
+            idPaquete="PAQ-200",
+            titulo="Título Original",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        guardadas: list[Tarea] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                panelEdicionTarea(
+                    tarea=tarea,
+                    nombrePaquete="General",
+                    integrantes=(),
+                    alGuardarParcial=lambda t: guardadas.append(t),
+                    alDescartarTarea=lambda t: None,
+                    alCerrar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                inputTit = _buscarPorId(update["model"], "input-titulo-tarea-drawer")
+                assert inputTit is not None
+                # Escribir nuevo título
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": inputTit["eventHandlers"]["onChange"]["target"],
+                        "data": [{"target": {"value": "Título Modificado"}}],
+                    }
+                )
+                up2 = await layout.render()
+                inputTit2 = _buscarPorId(up2["model"], "input-titulo-tarea-drawer")
+                assert inputTit2 is not None
+                # Desencadenar onBlur
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": inputTit2["eventHandlers"]["onBlur"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(guardadas) == 1
+        assert guardadas[0].titulo == "Título Modificado"
+
+    def testAutoguardadoOnChangePrioridadYResponsable(self) -> None:
+        """Verifica autoguardado inmediato on_change para prioridad y responsable (EARS-06.4)."""
+        from reactpy.core.layout import Layout
+
+        integrante = Integrante(
+            cedula="0911223344",
+            idProyecto="PROY-200",
+            nombre="Ana Lucía",
+            cargo=CargoIntegrante.DISENADOR_UI_UX,
+        )
+        tarea = Tarea(
+            idTarea="TAR-204",
+            idPaquete="PAQ-200",
+            titulo="Tarea UI",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        guardadas: list[Tarea] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                panelEdicionTarea(
+                    tarea=tarea,
+                    nombrePaquete="Diseño",
+                    integrantes=(integrante,),
+                    alGuardarParcial=lambda t: guardadas.append(t),
+                    alDescartarTarea=lambda t: None,
+                    alCerrar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                selectPrio = _buscarPorId(
+                    update["model"], "select-prioridad-tarea-drawer"
+                )
+                assert selectPrio is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": selectPrio["eventHandlers"]["onChange"]["target"],
+                        "data": [{"target": {"value": "Crítica"}}],
+                    }
+                )
+                up2 = await layout.render()
+                selectResp = _buscarPorId(
+                    up2["model"], "select-responsable-tarea-drawer"
+                )
+                assert selectResp is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": selectResp["eventHandlers"]["onChange"]["target"],
+                        "data": [{"target": {"value": "0911223344"}}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(guardadas) >= 2
+        assert guardadas[0].prioridad == PrioridadTarea.CRITICA
+        assert guardadas[1].cedulaResponsable.obtenerValor() == "0911223344"
+
+    def testIndicadoresVisualesAutoguardado(self) -> None:
+        """Verifica los tres estados visuales: Guardando…, ✓ Guardado y No se pudo guardar con reintento."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-205",
+            idPaquete="PAQ-200",
+            titulo="Tarea Estado",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+
+        for est, textoEsperado in [
+            (EstadoGuardado.GUARDANDO, "Guardando…"),
+            (EstadoGuardado.GUARDADO, "✓ Guardado"),
+            (EstadoGuardado.ERROR, "No se pudo guardar"),
+        ]:
+
+            async def renderizar(e=est) -> Any:
+                async with Layout(
+                    panelEdicionTarea(
+                        tarea=tarea,
+                        nombrePaquete="General",
+                        integrantes=(),
+                        alGuardarParcial=lambda t: None,
+                        alDescartarTarea=lambda t: None,
+                        alCerrar=lambda: None,
+                        estadoGuardado=e,
+                    )
+                ) as layout:
+                    update = await layout.render()
+                    return update["model"]
+
+            modelo = asyncio.run(renderizar())
+            assert _buscarPorId(modelo, "indicador-guardado-drawer") is not None
+            assert _contieneTexto(modelo, textoEsperado)
+            if est == EstadoGuardado.ERROR:
+                assert _buscarPorId(modelo, "btn-reintentar-guardado") is not None
+
+    def testDescarteLogicoRequiereConfirmacion(self) -> None:
+        """Verifica que el descarte lógico solicite confirmación y no mute si se cancela (EARS-06.6)."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-206",
+            idPaquete="PAQ-200",
+            titulo="Tarea a Descartar",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        descartadas: list[Tarea] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                panelEdicionTarea(
+                    tarea=tarea,
+                    nombrePaquete="General",
+                    integrantes=(),
+                    alGuardarParcial=lambda t: None,
+                    alDescartarTarea=lambda t: descartadas.append(t),
+                    alCerrar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                btnDescartar = _buscarPorId(update["model"], "btn-descartar-tarea")
+                assert btnDescartar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnDescartar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                upConfirm = await layout.render()
+                assert (
+                    _buscarPorId(upConfirm["model"], "confirmacion-descarte-tarea")
+                    is not None
+                )
+                assert len(descartadas) == 0
+
+                # Confirmar descarte
+                btnConfirmar = _buscarPorId(
+                    upConfirm["model"], "btn-confirmar-descarte-tarea"
+                )
+                assert btnConfirmar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnConfirmar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(descartadas) == 1
+        assert descartadas[0].idTarea == "TAR-206"
+
+    def testDrawerIntegracionCompletaEnComponenteApp(self) -> None:
+        """Verifica la apertura del drawer, autoguardado y descarte lógico integrado en componenteApp."""
+        import sqlite3
+
+        from reactpy.core.layout import Layout
+
+        from app.adapters.esquemaSqlite import inicializarEsquema
+        from app.adapters.repositorioSqlite import (
+            guardarProyectoCompleto,
+            recuperarProyectos,
+        )
+
+        conexion = sqlite3.connect(":memory:")
+        inicializarEsquema(conexion)
+
+        tareaTest = Tarea(
+            idTarea="TAR-800",
+            idPaquete="PAQ-800",
+            titulo="Tarea Original Para Edición",
+            descripcion=Alguno("Detalles iniciales"),
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        paqueteTest = PaqueteTrabajo(
+            idPaquete="PAQ-800",
+            idProyecto="PROY-800",
+            nombre="Paquete Drawer",
+            tareas=(tareaTest,),
+        )
+        proyectoTest = Proyecto(
+            idProyecto="PROY-800",
+            nombre="Proyecto Integración Drawer",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(paqueteTest,),
+            integrantes=(),
+        )
+        guardarProyectoCompleto(conexion, proyectoTest)
+
+        async def flujoDrawer() -> None:
+            async with Layout(componenteApp(conexion=conexion)) as layout:
+                update0 = await layout.render()
+                # 1. Navegar a Workspace
+                btnWs = _buscarPorId(update0["model"], "nav-item-workspace")
+                assert btnWs is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnWs["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                updateWs = await layout.render()
+                # 2. Clic en tarjeta para abrir Drawer
+                tarjeta = _buscarPorId(updateWs["model"], "titulo-tarea-TAR-800")
+                assert tarjeta is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": tarjeta["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                updateDrawer = await layout.render()
+                assert (
+                    _buscarPorId(updateDrawer["model"], "panel-edicion-tarea-drawer")
+                    is not None
+                )
+                assert (
+                    _buscarPorId(updateDrawer["model"], "btn-descartar-tarea")
+                    is not None
+                )
+
+                # 3. Descartar tarea lógicamente desde el drawer
+                btnDescartar = _buscarPorId(
+                    updateDrawer["model"], "btn-descartar-tarea"
+                )
+                assert btnDescartar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnDescartar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                upConf = await layout.render()
+                btnConfirmar = _buscarPorId(
+                    upConf["model"], "btn-confirmar-descarte-tarea"
+                )
+                assert btnConfirmar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnConfirmar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                await layout.render()
+
+        asyncio.run(flujoDrawer())
+
+        # Verificar en base de datos que activo = False
+        res = recuperarProyectos(conexion)
+        assert res.esExito()
+        proys = res.obtenerValor()
+        tareaDb = next(
+            t
+            for p in proys
+            for paq in p.paquetes
+            for t in paq.tareas
+            if t.idTarea == "TAR-800"
+        )
+        assert tareaDb.activo is False
