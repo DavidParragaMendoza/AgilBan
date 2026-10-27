@@ -16,8 +16,9 @@ from typing import Any
 
 from reactpy import component, html, use_state
 
+from app.adapters.repositorioSqlite import recuperarProyectos
 from app.domain.catalogos import EstadoKanban
-from app.domain.modelos import Tarea
+from app.domain.modelos import Proyecto, Tarea
 from app.domain.monadas import Alguno, Ninguno, Opcion
 from app.ui.web.estilos import (
     BORDE_SUAVE,
@@ -25,8 +26,8 @@ from app.ui.web.estilos import (
     FONDO_LIENZO,
     FONDO_SUPERFICIE,
     INDICADOR_GUARDADO,
-    TITULO_PANTALLA,
 )
+from app.ui.web.inicio import vistaInicio
 
 
 class EstadoGuardado(Enum):
@@ -247,86 +248,25 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
     # -------------------------------------------------------------------------
     def renderizarCuerpoPrincipal() -> Any:
         if vistaActiva == "INICIO":
+            proyectosActuales: tuple[Proyecto, ...] = ()
+            if conexion is not None:
+                resRecuperacion = recuperarProyectos(conexion)
+                if resRecuperacion.esExito():
+                    proyectosActuales = resRecuperacion.obtenerValor()
+
             return html.main(
                 {
                     "id": "vista-inicio-contenedor",
                     "className": (
-                        "flex-1 flex flex-col p-6 max-w-7xl w-full mx-auto animate-in fade-in duration-150"
+                        "flex-1 flex flex-col overflow-y-auto animate-in fade-in duration-150"
                     ),
                 },
-                html.div(
-                    {
-                        "className": (
-                            "flex flex-col md:flex-row md:items-center justify-between pb-6 "
-                            "border-b border-slate-200 gap-4"
-                        )
-                    },
-                    html.div(
-                        {"className": "space-y-1"},
-                        html.h1({"className": TITULO_PANTALLA}, "Mis Proyectos"),
-                        html.p(
-                            {"className": "text-sm text-slate-500"},
-                            "Selecciona un espacio de trabajo o registra una nueva iniciativa.",
-                        ),
-                    ),
-                    html.div(
-                        {"className": "flex items-center space-x-3"},
-                        html.input(
-                            {
-                                "id": "input-busqueda-proyectos-cabecera",
-                                "type": "text",
-                                "placeholder": "Buscar proyecto…",
-                                "value": textoBusquedaProyectos,
-                                "onChange": lambda e: setTextoBusquedaProyectos(
-                                    e["target"]["value"]
-                                ),
-                                "className": (
-                                    "px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-lg "
-                                    "text-slate-700 placeholder-slate-400 focus:outline-none "
-                                    "focus:border-indigo-500 w-64"
-                                ),
-                            }
-                        ),
-                    ),
-                ),
-                html.div(
-                    {
-                        "id": "catalogo-proyectos-area",
-                        "className": "py-8 flex-1 flex flex-col items-center justify-center text-center",
-                    },
-                    html.div(
-                        {
-                            "className": (
-                                "max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border "
-                                "border-slate-200 space-y-4"
-                            )
-                        },
-                        html.div(
-                            {
-                                "className": (
-                                    "w-12 h-12 bg-indigo-50 text-indigo-600 rounded-xl flex items-center "
-                                    "justify-center mx-auto text-xl font-bold"
-                                )
-                            },
-                            "📁",
-                        ),
-                        html.h2(
-                            {"className": "text-lg font-semibold text-slate-800"},
-                            "Explorador de Proyectos",
-                        ),
-                        html.p(
-                            {"className": "text-sm text-slate-500 leading-relaxed"},
-                            "Explora y organiza los proyectos activos de AgilBan bajo la metodologia EDT y tableros Kanban.",
-                        ),
-                        html.button(
-                            {
-                                "id": "btn-crear-primer-proyecto",
-                                "onClick": abrirModalNuevoProyecto,
-                                "className": f"{BOTON_PRIMARIO} w-full mt-2",
-                            },
-                            "+ Crear Proyecto",
-                        ),
-                    ),
+                vistaInicio(
+                    proyectos=proyectosActuales,
+                    textoBusqueda=textoBusquedaProyectos,
+                    alBuscar=setTextoBusquedaProyectos,
+                    alSeleccionarProyecto=seleccionarProyecto,
+                    alAbrirModalCreacion=abrirModalNuevoProyecto,
                 ),
             )
 
