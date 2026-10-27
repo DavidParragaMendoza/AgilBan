@@ -56,6 +56,9 @@ from app.ui.web.modalProyecto import (
     renderizarModalCreacionProyecto,
     validarFormularioProyecto,
 )
+from app.ui.web.modalRegreso import modalRegresoKanban
+from app.ui.web.tableroKanban import tableroKanban
+from app.ui.web.tarjetaTarea import tarjetaTarea
 
 
 def _buscarPorId(vdom: Any, elementoId: str) -> Any:
@@ -1295,3 +1298,854 @@ class TestBarraLateralEdt:
                 assert not _contieneTexto(modelFinal, "David Gomez")
 
         asyncio.run(flujoReactivo())
+
+
+class TestTarjetaKanban:
+    """Suite de pruebas unitarias para la Tarjeta Visual de Tarea (Bloque 4 / Tarea 4.1)."""
+
+    def testTarjetaMuestraIdentificadorTituloPrioridadResponsableYFecha(self) -> None:
+        """Verifica UT-WEB-05: Muestra TAR-NNN, título, badge cromático de prioridad, responsable y fecha."""
+        from reactpy.core.layout import Layout
+
+        integrante = Integrante(
+            cedula="0912345678",
+            idProyecto="PROY-001",
+            nombre="Carlos Bernabé",
+            cargo=CargoIntegrante.DESARROLLADOR_BACKEND,
+        )
+        tarea = Tarea(
+            idTarea="TAR-001",
+            idPaquete="PAQ-001",
+            titulo="Diseñar esquema relacional",
+            descripcion=Alguno("Esquema SQLite con FKs"),
+            prioridad=PrioridadTarea.ALTA,
+            cedulaResponsable=Alguno("0912345678"),
+            fechaObjetivo=Alguno("2026-11-15"),
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                tarjetaTarea(
+                    tarea=tarea,
+                    integrantes=(integrante,),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzar=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "tarjeta-tarea-TAR-001") is not None
+        assert _contieneTexto(modelo, "TAR-001")
+        assert _contieneTexto(modelo, "Diseñar esquema relacional")
+        assert _contieneTexto(modelo, "Alta")
+        assert _contieneTexto(modelo, "Carlos Bernabé")
+        assert _contieneTexto(modelo, "2026-11-15")
+        assert _buscarPorId(modelo, "contador-regresos-TAR-001") is None
+        assert _buscarPorId(modelo, "badge-vencida-TAR-001") is None
+
+    def testTarjetaSinAsignarYSinFecha(self) -> None:
+        """Verifica que sin responsable muestre 'Sin asignar' y sin fecha 'Sin fecha'."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-002",
+            idPaquete="PAQ-001",
+            titulo="Configurar linter",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                tarjetaTarea(
+                    tarea=tarea,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzar=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _contieneTexto(modelo, "Sin asignar")
+        assert _contieneTexto(modelo, "Sin fecha")
+
+    def testTarjetaVencidaMuestraBadgeRojoSinBloquearAcciones(self) -> None:
+        """Verifica que una fecha objetivo pasada exhiba badge 'Vencida' sin bloquear avance."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-003",
+            idPaquete="PAQ-001",
+            titulo="Corregir vulnerabilidad",
+            prioridad=PrioridadTarea.CRITICA,
+            fechaObjetivo=Alguno("2020-01-01"),
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        avances: list[tuple[Tarea, EstadoKanban]] = []
+
+        async def interactuar() -> Any:
+            async with Layout(
+                tarjetaTarea(
+                    tarea=tarea,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzar=lambda t, e: avances.append((t, e)),
+                    alSolicitarDevolucion=lambda t: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                btnAvanzar = _buscarPorId(update["model"], "btn-avanzar-tarea-TAR-003")
+                assert btnAvanzar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnAvanzar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                return update["model"]
+
+        modelo = asyncio.run(interactuar())
+        assert _buscarPorId(modelo, "badge-vencida-TAR-003") is not None
+        assert _contieneTexto(modelo, "Vencida")
+        assert len(avances) == 1
+        assert avances[0][1] == EstadoKanban.EN_PROGRESO
+
+    def testTarjetaContadorRegresosVisibleSiMayorACero(self) -> None:
+        """Verifica que el contador de regresos se exhiba únicamente si contadorRegresos > 0."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-004",
+            idPaquete="PAQ-001",
+            titulo="Refactorizar módulo",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.EN_PROGRESO,
+            contadorRegresos=3,
+            activo=True,
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                tarjetaTarea(
+                    tarea=tarea,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzar=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        badgeRegresos = _buscarPorId(modelo, "contador-regresos-TAR-004")
+        assert badgeRegresos is not None
+        assert _contieneTexto(badgeRegresos, "3")
+
+    def testTransicionesPermitidasSegunEstadoKanban(self) -> None:
+        """Verifica que las acciones sigan estrictamente las transiciones permitidas (EARS-04.3 y EARS-04.4)."""
+        from reactpy.core.layout import Layout
+
+        estadosCasos = [
+            (EstadoKanban.PENDIENTE, True, False, "En progreso →"),
+            (EstadoKanban.EN_PROGRESO, True, True, "En revisión →"),
+            (EstadoKanban.EN_REVISION, True, True, "Terminar ✓"),
+            (EstadoKanban.TERMINADA, False, True, None),
+        ]
+
+        for estado, permiteAvanzar, permiteDevolver, textoAvanzar in estadosCasos:
+            tarea = Tarea(
+                idTarea=f"TAR-{estado.name}",
+                idPaquete="PAQ-001",
+                titulo=f"Tarea en {estado.value}",
+                prioridad=PrioridadTarea.MEDIA,
+                estado=estado,
+                contadorRegresos=0,
+                activo=True,
+            )
+
+            async def renderizar(tar: Tarea = tarea) -> Any:
+                async with Layout(
+                    tarjetaTarea(
+                        tarea=tar,
+                        integrantes=(),
+                        alSeleccionarTarea=lambda t: None,
+                        alAvanzar=lambda t, e: None,
+                        alSolicitarDevolucion=lambda t: None,
+                    )
+                ) as layout:
+                    update = await layout.render()
+                    return update["model"]
+
+            modelo = asyncio.run(renderizar())
+            btnAvanzar = _buscarPorId(modelo, f"btn-avanzar-tarea-TAR-{estado.name}")
+            btnDevolver = _buscarPorId(modelo, f"btn-devolver-tarea-TAR-{estado.name}")
+
+            if permiteAvanzar:
+                assert btnAvanzar is not None
+                assert _contieneTexto(btnAvanzar, textoAvanzar)
+            else:
+                assert btnAvanzar is None
+
+            if permiteDevolver:
+                assert btnDevolver is not None
+                assert _contieneTexto(btnDevolver, "Devolver")
+            else:
+                assert btnDevolver is None
+
+    def testClicCuerpoTarjetaAbreSideDrawer(self) -> None:
+        """Verifica que hacer clic en el cuerpo de la tarjeta dispare alSeleccionarTarea."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-005",
+            idPaquete="PAQ-001",
+            titulo="Auditar dependencias",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        seleccionadas: list[Tarea] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                tarjetaTarea(
+                    tarea=tarea,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: seleccionadas.append(t),
+                    alAvanzar=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                tituloNodo = _buscarPorId(update["model"], "titulo-tarea-TAR-005")
+                assert tituloNodo is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": tituloNodo["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(seleccionadas) == 1
+        assert seleccionadas[0].idTarea == "TAR-005"
+
+    def testClicBotonDevolverDisparaCallback(self) -> None:
+        """Verifica que hacer clic en Devolver invoque alSolicitarDevolucion."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-006",
+            idPaquete="PAQ-001",
+            titulo="Pruebas de carga",
+            prioridad=PrioridadTarea.ALTA,
+            estado=EstadoKanban.EN_PROGRESO,
+            contadorRegresos=0,
+            activo=True,
+        )
+        devoluciones: list[Tarea] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                tarjetaTarea(
+                    tarea=tarea,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzar=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: devoluciones.append(t),
+                )
+            ) as layout:
+                update = await layout.render()
+                btnDevolver = _buscarPorId(
+                    update["model"], "btn-devolver-tarea-TAR-006"
+                )
+                assert btnDevolver is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnDevolver["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(devoluciones) == 1
+        assert devoluciones[0].idTarea == "TAR-006"
+
+
+class TestModalRegresoKanban:
+    """Suite de pruebas unitarias para el Modal de Justificación Obligatoria (Bloque 4 / Tarea 4.3)."""
+
+    def testModalMuestraOrigenYDestinoSoloLecturaSinSelector(self) -> None:
+        """Verifica que muestre origen y destino calculados automáticamente sin menú selector (EARS-05.1)."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-010",
+            idPaquete="PAQ-001",
+            titulo="Implementar caché Redis",
+            prioridad=PrioridadTarea.ALTA,
+            estado=EstadoKanban.EN_PROGRESO,
+            contadorRegresos=0,
+            activo=True,
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                modalRegresoKanban(
+                    tarea=tarea,
+                    alConfirmar=lambda m: None,
+                    alCancelar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "modal-regreso-dialogo") is not None
+        assert _contieneTexto(modelo, "En progreso")
+        assert _contieneTexto(modelo, "Pendiente")
+        assert _contieneTexto(modelo, "Solo lectura")
+
+        def tieneSelect(nodo: Any) -> bool:
+            if isinstance(nodo, dict):
+                if nodo.get("tagName") == "select":
+                    return True
+                for hijo in nodo.get("children", []):
+                    if tieneSelect(hijo):
+                        return True
+            return False
+
+        assert not tieneSelect(modelo)
+
+    def testModalRechazaMotivoVacioOSoloEspacios(self) -> None:
+        """Verifica que rechace motivo vacío o de puros espacios mostrando advertencia contextual (EARS-05.2)."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-011",
+            idPaquete="PAQ-001",
+            titulo="Validar tokens JWT",
+            prioridad=PrioridadTarea.ALTA,
+            estado=EstadoKanban.EN_REVISION,
+            contadorRegresos=1,
+            activo=True,
+        )
+        confirmaciones: list[str] = []
+
+        async def interactuar() -> Any:
+            async with Layout(
+                modalRegresoKanban(
+                    tarea=tarea,
+                    alConfirmar=lambda m: confirmaciones.append(m),
+                    alCancelar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                btnConfirmar = _buscarPorId(update["model"], "btn-confirmar-regreso")
+                assert btnConfirmar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnConfirmar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                update2 = await layout.render()
+                return update2["model"]
+
+        modelo = asyncio.run(interactuar())
+        assert len(confirmaciones) == 0
+        assert _contieneTexto(modelo, "El motivo de devolución es obligatorio")
+
+    def testModalConfirmarConMotivoValidoDisparaCallback(self) -> None:
+        """Verifica que confirmar con motivo válido dispare alConfirmar con el texto limpio (EARS-05.4)."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-012",
+            idPaquete="PAQ-001",
+            titulo="Integración CI/CD",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.TERMINADA,
+            contadorRegresos=0,
+            activo=True,
+        )
+        confirmaciones: list[str] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                modalRegresoKanban(
+                    tarea=tarea,
+                    alConfirmar=lambda m: confirmaciones.append(m),
+                    alCancelar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                inputMotivo = _buscarPorId(update["model"], "input-motivo-regreso")
+                assert inputMotivo is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": inputMotivo["eventHandlers"]["onChange"]["target"],
+                        "data": [
+                            {
+                                "target": {
+                                    "value": "Faltan pruebas unitarias en el pipeline"
+                                }
+                            }
+                        ],
+                    }
+                )
+                update2 = await layout.render()
+                btnConfirmar = _buscarPorId(update2["model"], "btn-confirmar-regreso")
+                assert btnConfirmar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnConfirmar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(confirmaciones) == 1
+        assert confirmaciones[0] == "Faltan pruebas unitarias en el pipeline"
+
+    def testModalCancelarNoMuta(self) -> None:
+        """Verifica que presionar Cancelar invoque alCancelar sin mutar estado."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-013",
+            idPaquete="PAQ-001",
+            titulo="Migrar Dockerfile",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.EN_PROGRESO,
+            contadorRegresos=0,
+            activo=True,
+        )
+        cancelados: list[bool] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                modalRegresoKanban(
+                    tarea=tarea,
+                    alConfirmar=lambda m: None,
+                    alCancelar=lambda: cancelados.append(True),
+                )
+            ) as layout:
+                update = await layout.render()
+                btnCancelar = _buscarPorId(update["model"], "btn-cancelar-regreso")
+                assert btnCancelar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnCancelar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(cancelados) == 1
+
+    def testModalInvalidoParaTareaPendiente(self) -> None:
+        """Verifica que para una tarea en Pendiente (sin retroceso válido) el modal retorne elemento oculto."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-014",
+            idPaquete="PAQ-001",
+            titulo="Tarea inicial",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                modalRegresoKanban(
+                    tarea=tarea,
+                    alConfirmar=lambda m: None,
+                    alCancelar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "modal-regreso-invalido") is not None
+        assert _buscarPorId(modelo, "modal-regreso-dialogo") is None
+
+
+class TestTableroKanban:
+    """Suite de pruebas unitarias para el Tablero Kanban y creación de tareas (Bloque 4 / Tarea 4.2)."""
+
+    def testTableroRenderiza4ColumnasDelimitadas(self) -> None:
+        """Verifica que el tablero contenga las 4 columnas canónicas fijas (EARS-04.1)."""
+        from reactpy.core.layout import Layout
+
+        paquete = PaqueteTrabajo(
+            idPaquete="PAQ-100",
+            idProyecto="PROY-001",
+            nombre="Backend Core",
+            tareas=(),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                tableroKanban(
+                    paquete=paquete,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzarTarea=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                    alCrearTarea=lambda tit, clv: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "columna-kanban-pendiente") is not None
+        assert _buscarPorId(modelo, "columna-kanban-en_progreso") is not None
+        assert _buscarPorId(modelo, "columna-kanban-en_revision") is not None
+        assert _buscarPorId(modelo, "columna-kanban-terminada") is not None
+
+    def testTableroFiltraTareasInactivas(self) -> None:
+        """Verifica que las tareas descartadas lógicamente (activo=False) no se muestren en ninguna columna (EARS-04.2)."""
+        from reactpy.core.layout import Layout
+
+        tareaActiva = Tarea(
+            idTarea="TAR-020",
+            idPaquete="PAQ-100",
+            titulo="Tarea Visible",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=True,
+        )
+        tareaDescartada = Tarea(
+            idTarea="TAR-021",
+            idPaquete="PAQ-100",
+            titulo="Tarea Descartada",
+            prioridad=PrioridadTarea.ALTA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=0,
+            activo=False,
+        )
+        paquete = PaqueteTrabajo(
+            idPaquete="PAQ-100",
+            idProyecto="PROY-001",
+            nombre="Backend Core",
+            tareas=(tareaActiva, tareaDescartada),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                tableroKanban(
+                    paquete=paquete,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzarTarea=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                    alCrearTarea=lambda tit, clv: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "tarjeta-tarea-TAR-020") is not None
+        assert _buscarPorId(modelo, "tarjeta-tarea-TAR-021") is None
+        assert _contieneTexto(modelo, "Tarea Visible")
+        assert not _contieneTexto(modelo, "Tarea Descartada")
+
+    def testTableroIndicacionNeutralEnColumnaVacia(self) -> None:
+        """Verifica que una columna sin tareas muestre una indicación neutral sin error (EARS-04.6)."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-030",
+            idPaquete="PAQ-100",
+            titulo="Única tarea en progreso",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.EN_PROGRESO,
+            contadorRegresos=0,
+            activo=True,
+        )
+        paquete = PaqueteTrabajo(
+            idPaquete="PAQ-100",
+            idProyecto="PROY-001",
+            nombre="Frontend",
+            tareas=(tarea,),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                tableroKanban(
+                    paquete=paquete,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzarTarea=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                    alCrearTarea=lambda tit, clv: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "columna-vacia-pendiente") is not None
+        assert _buscarPorId(modelo, "columna-vacia-en_revision") is not None
+        assert _buscarPorId(modelo, "columna-vacia-terminada") is not None
+        assert _buscarPorId(modelo, "columna-vacia-en_progreso") is None
+
+    def testTableroBannerVacioCuandoPaqueteNoTieneTareas(self) -> None:
+        """Verifica estado orientador cuando el paquete no tiene tareas activas (EARS-04.7)."""
+        from reactpy.core.layout import Layout
+
+        paqueteVacio = PaqueteTrabajo(
+            idPaquete="PAQ-101",
+            idProyecto="PROY-001",
+            nombre="Seguridad",
+            tareas=(),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                tableroKanban(
+                    paquete=paqueteVacio,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzarTarea=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                    alCrearTarea=lambda tit, clv: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "tablero-vacio-paquete") is not None
+        assert _contieneTexto(modelo, "Paquete sin tareas activas")
+        assert _buscarPorId(modelo, "btn-crear-primera-tarea") is not None
+
+    def testModalNuevaTareaValidacionTitulo(self) -> None:
+        """Verifica validación de título (1-120 caracteres) en creación de tareas (EARS-04.5)."""
+        from reactpy.core.layout import Layout
+
+        paquete = PaqueteTrabajo(
+            idPaquete="PAQ-102",
+            idProyecto="PROY-001",
+            nombre="Infraestructura",
+            tareas=(),
+        )
+        creadas: list[tuple[str, str]] = []
+
+        async def interactuar() -> Any:
+            async with Layout(
+                tableroKanban(
+                    paquete=paquete,
+                    integrantes=(),
+                    alSeleccionarTarea=lambda t: None,
+                    alAvanzarTarea=lambda t, e: None,
+                    alSolicitarDevolucion=lambda t: None,
+                    alCrearTarea=lambda tit, clv: creadas.append((tit, clv)),
+                )
+            ) as layout:
+                update = await layout.render()
+                btnNueva = _buscarPorId(update["model"], "btn-crear-primera-tarea")
+                assert btnNueva is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnNueva["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                update2 = await layout.render()
+                btnGuardar = _buscarPorId(update2["model"], "btn-guardar-nueva-tarea")
+                assert btnGuardar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnGuardar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                update3 = await layout.render()
+                assert _contieneTexto(
+                    update3["model"], "El título de la tarea es obligatorio"
+                )
+
+                inputTitulo = _buscarPorId(update3["model"], "input-titulo-nueva-tarea")
+                assert inputTitulo is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": inputTitulo["eventHandlers"]["onChange"]["target"],
+                        "data": [
+                            {"target": {"value": "Configurar clúster Kubernetes"}}
+                        ],
+                    }
+                )
+                update4 = await layout.render()
+                btnGuardar2 = _buscarPorId(update4["model"], "btn-guardar-nueva-tarea")
+                assert btnGuardar2 is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnGuardar2["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                return update4["model"]
+
+        asyncio.run(interactuar())
+        assert len(creadas) == 1
+        assert creadas[0][0] == "Configurar clúster Kubernetes"
+        assert len(creadas[0][1]) > 0
+
+    def testWorkspaceKanbanIntegracionEnComponenteApp(self) -> None:
+        """Verifica la integración completa del Kanban y modal de regreso dentro de componenteApp."""
+        import sqlite3
+
+        from reactpy.core.layout import Layout
+
+        from app.adapters.esquemaSqlite import inicializarEsquema
+        from app.adapters.repositorioSqlite import (
+            guardarProyectoCompleto,
+            recuperarProyectos,
+        )
+
+        conexion = sqlite3.connect(":memory:")
+        inicializarEsquema(conexion)
+
+        tareaTest = Tarea(
+            idTarea="TAR-500",
+            idPaquete="PAQ-500",
+            titulo="Tarea Flujo Completo",
+            prioridad=PrioridadTarea.ALTA,
+            estado=EstadoKanban.EN_PROGRESO,
+            contadorRegresos=0,
+            activo=True,
+        )
+        paqueteTest = PaqueteTrabajo(
+            idPaquete="PAQ-500",
+            idProyecto="PROY-500",
+            nombre="Paquete Kanban",
+            tareas=(tareaTest,),
+        )
+        proyectoTest = Proyecto(
+            idProyecto="PROY-500",
+            nombre="Proyecto Kanban Web",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(paqueteTest,),
+            integrantes=(),
+        )
+        guardarProyectoCompleto(conexion, proyectoTest)
+
+        async def flujoCompleto() -> None:
+            async with Layout(componenteApp(conexion=conexion)) as layout:
+                update0 = await layout.render()
+                # 1. Navegar a Workspace
+                btnWs = _buscarPorId(update0["model"], "nav-item-workspace")
+                assert btnWs is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnWs["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                updateWs = await layout.render()
+                assert (
+                    _buscarPorId(updateWs["model"], "tablero-kanban-area") is not None
+                )
+                assert (
+                    _buscarPorId(updateWs["model"], "tarjeta-tarea-TAR-500") is not None
+                )
+
+                # 2. Solicitar devolución
+                btnDevolver = _buscarPorId(
+                    updateWs["model"], "btn-devolver-tarea-TAR-500"
+                )
+                assert btnDevolver is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnDevolver["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                updateModal = await layout.render()
+                assert (
+                    _buscarPorId(updateModal["model"], "modal-regreso-dialogo")
+                    is not None
+                )
+
+                # 3. Ingresar justificación y confirmar
+                inputMotivo = _buscarPorId(updateModal["model"], "input-motivo-regreso")
+                assert inputMotivo is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": inputMotivo["eventHandlers"]["onChange"]["target"],
+                        "data": [
+                            {"target": {"value": "Revisión técnica solicitada por QA"}}
+                        ],
+                    }
+                )
+                updateModalEscrito = await layout.render()
+                btnConfirmar = _buscarPorId(
+                    updateModalEscrito["model"], "btn-confirmar-regreso"
+                )
+                assert btnConfirmar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnConfirmar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                await layout.render()
+
+        asyncio.run(flujoCompleto())
+
+        # Verificar en SQLite que la tarea retrocedió a Pendiente y tiene contadorRegresos = 1
+        res = recuperarProyectos(conexion)
+        assert res.esExito()
+        proys = res.obtenerValor()
+        tareaDb = next(
+            t
+            for p in proys
+            for paq in p.paquetes
+            for t in paq.tareas
+            if t.idTarea == "TAR-500"
+        )
+        assert tareaDb.estado == EstadoKanban.PENDIENTE
+        assert tareaDb.contadorRegresos == 1
+        assert len(tareaDb.historial) == 1
+        assert (
+            tareaDb.historial[0].comentario.obtenerValor()
+            == "Revisión técnica solicitada por QA"
+        )

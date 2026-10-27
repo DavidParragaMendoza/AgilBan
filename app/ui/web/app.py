@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, replace
+from datetime import datetime
 from enum import Enum
 from typing import Any
 
@@ -18,14 +19,20 @@ from reactpy import component, html, use_state
 
 from app.adapters.repositorioSqlite import (
     actualizarNombrePaquete,
+    crearTareaConHistorial,
     eliminarIntegrante,
     eliminarPaqueteVacio,
     guardarProyectoCompleto,
+    guardarTareaConHistorial,
     recuperarProyectos,
 )
 from app.core.edt import (
     calcularEstadoPaquete,
     obtenerTareasActivas,
+)
+from app.core.kanban import (
+    avanzarOTareasKanban,
+    destinoRetroceso,
 )
 from app.domain.catalogos import EstadoKanban
 from app.domain.modelos import Integrante, PaqueteTrabajo, Proyecto, Tarea
@@ -41,6 +48,8 @@ from app.ui.web.estilos import (
 )
 from app.ui.web.inicio import vistaInicio
 from app.ui.web.modalProyecto import modalCreacionProyecto
+from app.ui.web.modalRegreso import modalRegresoKanban
+from app.ui.web.tableroKanban import tableroKanban
 
 
 class EstadoGuardado(Enum):
@@ -136,6 +145,75 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
 
     def marcarCierrePendiente(pendiente: bool) -> None:
         setCierrePendiente(pendiente)
+
+    def avanzarTareaWorkspace(tarea: Tarea, nuevoEstado: EstadoKanban) -> None:
+        timestamp = datetime.now().isoformat()
+        resultado = avanzarOTareasKanban(
+            tarea=tarea,
+            nuevoEstado=nuevoEstado,
+            comentario=Ninguno(),
+            timestamp=timestamp,
+        )
+        if resultado.esExito():
+            tareaActualizada = resultado.obtenerValor()
+            if conexion is not None:
+                guardarTareaConHistorial(conexion, tareaActualizada)
+            if (
+                tareaEnEdicion.esAlguno()
+                and tareaEnEdicion.obtenerValor().idTarea == tarea.idTarea
+            ):
+                setTareaEnEdicion(Alguno(tareaActualizada))
+                setBorradorTarea(Alguno(tareaActualizada))
+            forzarActualizacion()
+
+    def solicitarDevolucionWorkspace(tarea: Tarea) -> None:
+        opcionDestino = destinoRetroceso(tarea.estado)
+        if opcionDestino.esAlguno():
+            setRetrocesoPendiente(Alguno((tarea, opcionDestino.obtenerValor())))
+
+    def confirmarDevolucionWorkspace(justificacion: str) -> None:
+        if retrocesoPendiente.esNinguno():
+            return
+        tarea, destino = retrocesoPendiente.obtenerValor()
+        timestamp = datetime.now().isoformat()
+        resultado = avanzarOTareasKanban(
+            tarea=tarea,
+            nuevoEstado=destino,
+            comentario=Alguno(justificacion),
+            timestamp=timestamp,
+        )
+        if resultado.esExito():
+            tareaActualizada = resultado.obtenerValor()
+            if conexion is not None:
+                guardarTareaConHistorial(conexion, tareaActualizada)
+            if (
+                tareaEnEdicion.esAlguno()
+                and tareaEnEdicion.obtenerValor().idTarea == tarea.idTarea
+            ):
+                setTareaEnEdicion(Alguno(tareaActualizada))
+                setBorradorTarea(Alguno(tareaActualizada))
+            setRetrocesoPendiente(_castOpcion(Ninguno(), tuple[Tarea, EstadoKanban]))
+            forzarActualizacion()
+
+    def cancelarDevolucionWorkspace() -> None:
+        setRetrocesoPendiente(_castOpcion(Ninguno(), tuple[Tarea, EstadoKanban]))
+
+    def crearTareaWorkspace(idPaquete: str, titulo: str, claveSolicitud: str) -> None:
+        if conexion is not None:
+            timestamp = datetime.now().isoformat()
+            resultado = crearTareaConHistorial(
+                conexion=conexion,
+                idPaquete=idPaquete,
+                titulo=titulo,
+                timestamp=timestamp,
+                claveSolicitud=claveSolicitud,
+            )
+            if resultado.esExito():
+                nuevaTarea = resultado.obtenerValor()
+                setTareaEnEdicion(Alguno(nuevaTarea))
+                setBorradorTarea(Alguno(nuevaTarea))
+                setEstadoGuardado(EstadoGuardado.GUARDADO)
+                forzarActualizacion()
 
     # -------------------------------------------------------------------------
     # 3. Renderizado de la Barra Superior de Navegacion
@@ -523,55 +601,20 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
                                 ),
                             ),
                         ),
-                        html.div(
-                            {"className": "flex items-center space-x-3"},
-                            html.button(
-                                {
-                                    "id": "btn-nueva-tarea-kanban",
-                                    "className": BOTON_PRIMARIO,
-                                },
-                                "+ Nueva Tarea",
-                            ),
-                        ),
                     ),
                     html.div(
                         {
                             "id": "tablero-kanban-area",
-                            "className": "flex-1 overflow-x-auto p-6 flex gap-6 bg-slate-50",
+                            "className": "flex-1 flex flex-col min-h-0 bg-slate-50 overflow-hidden",
                         },
-                        html.div(
-                            {
-                                "className": (
-                                    "flex-1 flex items-center justify-center p-8 text-center border-2 "
-                                    "border-dashed border-slate-200 rounded-2xl m-4 bg-white/50"
-                                )
-                            },
-                            html.div(
-                                {"className": "max-w-md space-y-2"},
-                                html.div(
-                                    {
-                                        "className": (
-                                            "w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center "
-                                            "justify-center mx-auto text-lg font-bold"
-                                        )
-                                    },
-                                    "📌",
-                                ),
-                                html.h3(
-                                    {
-                                        "className": "text-sm font-bold text-slate-800 uppercase tracking-wider"
-                                    },
-                                    f"Tablero Kanban — {paquete.nombre}",
-                                ),
-                                html.p(
-                                    {
-                                        "className": "text-xs text-slate-500 leading-relaxed"
-                                    },
-                                    (
-                                        f"Visualización de las 4 columnas delimitadas con {len(tareasActivas)} "
-                                        "tareas activas para este paquete."
-                                    ),
-                                ),
+                        tableroKanban(
+                            paquete=paquete,
+                            integrantes=proyecto.integrantes,
+                            alSeleccionarTarea=editarTarea,
+                            alAvanzarTarea=avanzarTareaWorkspace,
+                            alSolicitarDevolucion=solicitarDevolucionWorkspace,
+                            alCrearTarea=lambda titulo, clave: crearTareaWorkspace(
+                                paquete.idPaquete, titulo, clave
                             ),
                         ),
                     ),
@@ -670,19 +713,42 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
     # 5. Renderizado de Modales y Superposiciones
     # -------------------------------------------------------------------------
     def renderizarSuperposiciones() -> Any:
-        if not modalCreacionAbierto:
+        superposiciones: list[Any] = []
+
+        if modalCreacionAbierto:
+            proyectosActuales: tuple[Proyecto, ...] = ()
+            if conexion is not None:
+                resRecuperacion = recuperarProyectos(conexion)
+                if resRecuperacion.esExito():
+                    proyectosActuales = resRecuperacion.obtenerValor()
+
+            superposiciones.append(
+                modalCreacionProyecto(
+                    alCerrar=cerrarModalNuevoProyecto,
+                    alGuardar=guardarNuevoProyecto,
+                    proyectosExistentes=proyectosActuales,
+                )
+            )
+
+        if retrocesoPendiente.esAlguno():
+            tareaRetroceso, _destino = retrocesoPendiente.obtenerValor()
+            superposiciones.append(
+                modalRegresoKanban(
+                    tarea=tareaRetroceso,
+                    alConfirmar=confirmarDevolucionWorkspace,
+                    alCancelar=cancelarDevolucionWorkspace,
+                )
+            )
+
+        if not superposiciones:
             return html.div()
 
-        proyectosActuales: tuple[Proyecto, ...] = ()
-        if conexion is not None:
-            resRecuperacion = recuperarProyectos(conexion)
-            if resRecuperacion.esExito():
-                proyectosActuales = resRecuperacion.obtenerValor()
+        if len(superposiciones) == 1:
+            return superposiciones[0]
 
-        return modalCreacionProyecto(
-            alCerrar=cerrarModalNuevoProyecto,
-            alGuardar=guardarNuevoProyecto,
-            proyectosExistentes=proyectosActuales,
+        return html.div(
+            {"id": "contenedor-superposiciones"},
+            *superposiciones,
         )
 
     # Variables y callbacks accesibles para inspeccion y reactividad
@@ -716,6 +782,11 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
         programarRetroceso,
         registrarSolicitudTarea,
         marcarCierrePendiente,
+        avanzarTareaWorkspace,
+        solicitarDevolucionWorkspace,
+        confirmarDevolucionWorkspace,
+        cancelarDevolucionWorkspace,
+        crearTareaWorkspace,
     )
     if len(_manejadoresAcciones) == 0:
         pass
