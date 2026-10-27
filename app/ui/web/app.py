@@ -16,7 +16,10 @@ from typing import Any
 
 from reactpy import component, html, use_state
 
-from app.adapters.repositorioSqlite import recuperarProyectos
+from app.adapters.repositorioSqlite import (
+    guardarProyectoCompleto,
+    recuperarProyectos,
+)
 from app.domain.catalogos import EstadoKanban
 from app.domain.modelos import Proyecto, Tarea
 from app.domain.monadas import Alguno, Ninguno, Opcion
@@ -28,6 +31,7 @@ from app.ui.web.estilos import (
     INDICADOR_GUARDADO,
 )
 from app.ui.web.inicio import vistaInicio
+from app.ui.web.modalProyecto import modalCreacionProyecto
 
 
 class EstadoGuardado(Enum):
@@ -365,6 +369,15 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
             ),
         )
 
+    def guardarNuevoProyecto(nuevoProyecto: Proyecto) -> None:
+        if conexion is not None:
+            guardarProyectoCompleto(conexion, nuevoProyecto)
+        setIdProyectoActivo(Alguno(nuevoProyecto.idProyecto))
+        if len(nuevoProyecto.paquetes) > 0:
+            setIdPaqueteSeleccionado(Alguno(nuevoProyecto.paquetes[0].idPaquete))
+        setVistaActiva("WORKSPACE")
+        setModalCreacionAbierto(False)
+
     # -------------------------------------------------------------------------
     # 5. Renderizado de Modales y Superposiciones
     # -------------------------------------------------------------------------
@@ -372,55 +385,16 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
         if not modalCreacionAbierto:
             return html.div()
 
-        return html.div(
-            {
-                "id": "modal-creacion-proyecto-overlay",
-                "className": (
-                    "fixed inset-0 bg-slate-900/40 backdrop-blur-sm flex items-center "
-                    "justify-center z-50 p-4"
-                ),
-            },
-            html.div(
-                {
-                    "className": (
-                        "bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full "
-                        "p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150"
-                    )
-                },
-                html.div(
-                    {"className": "flex items-center justify-between"},
-                    html.h3(
-                        {"className": "text-lg font-bold text-slate-900"},
-                        "Crear Nuevo Proyecto",
-                    ),
-                    html.button(
-                        {
-                            "id": "btn-cerrar-modal-x",
-                            "onClick": cerrarModalNuevoProyecto,
-                            "className": "text-slate-400 hover:text-slate-600 text-lg font-bold",
-                        },
-                        "✕",
-                    ),
-                ),
-                html.p(
-                    {"className": "text-sm text-slate-500"},
-                    "Formulario guiado con generacion automatica de paquetes e integrantes reactivos.",
-                ),
-                html.div(
-                    {"className": "flex justify-end space-x-3 pt-4"},
-                    html.button(
-                        {
-                            "id": "btn-cancelar-modal-proyecto",
-                            "onClick": cerrarModalNuevoProyecto,
-                            "className": (
-                                "px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 "
-                                "hover:bg-slate-200 rounded-lg transition-colors"
-                            ),
-                        },
-                        "Cancelar",
-                    ),
-                ),
-            ),
+        proyectosActuales: tuple[Proyecto, ...] = ()
+        if conexion is not None:
+            resRecuperacion = recuperarProyectos(conexion)
+            if resRecuperacion.esExito():
+                proyectosActuales = resRecuperacion.obtenerValor()
+
+        return modalCreacionProyecto(
+            alCerrar=cerrarModalNuevoProyecto,
+            alGuardar=guardarNuevoProyecto,
+            proyectosExistentes=proyectosActuales,
         )
 
     # Variables y callbacks accesibles para inspeccion y reactividad

@@ -27,6 +27,12 @@ from app.ui.web.inicio import (
     filtrarProyectosPorNombre,
     renderizarVistaInicio,
 )
+from app.ui.web.modalProyecto import (
+    construirEntidadProyecto,
+    modalCreacionProyecto,
+    renderizarModalCreacionProyecto,
+    validarFormularioProyecto,
+)
 
 
 def _buscarPorId(vdom: Any, elementoId: str) -> Any:
@@ -308,3 +314,238 @@ class TestComponenteAppNavegacionSpa:
 
         assert _buscarPorId(modelo, "agilban-encabezado-navegacion") is not None
         assert _buscarPorId(modelo, "vista-inicio-contenedor") is not None
+
+
+class TestModalCreacionProyecto:
+    """Suite de pruebas unitarias para el dialogo modal de creacion de proyecto (RF-01 y RF-02)."""
+
+    def testUT_WEB_03_ModalGeneraTresFilasDinamicasDeIntegrantes(self) -> None:
+        """Verifica UT-WEB-03: Al configurar 3 integrantes se generan exactamente 3 filas con cedula, nombre y cargo."""
+        integrantes = (
+            {
+                "cedula": "0911111111",
+                "nombre": "Carlos Bernabe",
+                "cargo": CargoIntegrante.LIDER_PROYECTO.value,
+            },
+            {
+                "cedula": "0922222222",
+                "nombre": "Javier Infante",
+                "cargo": CargoIntegrante.DESARROLLADOR_BACKEND.value,
+            },
+            {
+                "cedula": "0933333333",
+                "nombre": "David Parraga",
+                "cargo": CargoIntegrante.DISENADOR_UI_UX.value,
+            },
+        )
+
+        vdom = renderizarModalCreacionProyecto(
+            nombre="Proyecto Tres Miembros",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            numPaquetes=2,
+            integrantes=integrantes,
+            errores={},
+            alCambiarNombre=lambda _: None,
+            alCambiarTipo=lambda _: None,
+            alCambiarPaquetes=lambda _: None,
+            alActualizarIntegrante=lambda _i, _c, _v: None,
+            alAgregarIntegrante=lambda: None,
+            alEliminarIntegrante=lambda _: None,
+            alConfirmarGuardar=lambda: None,
+            alCerrar=lambda: None,
+        )
+
+        assert _buscarPorId(vdom, "fila-integrante-0") is not None
+        assert _buscarPorId(vdom, "fila-integrante-1") is not None
+        assert _buscarPorId(vdom, "fila-integrante-2") is not None
+        assert _buscarPorId(vdom, "fila-integrante-3") is None
+
+        for idx in range(3):
+            assert _buscarPorId(vdom, f"input-cedula-{idx}") is not None
+            assert _buscarPorId(vdom, f"input-nombre-{idx}") is not None
+            assert _buscarPorId(vdom, f"select-cargo-{idx}") is not None
+
+    def testModalGeneraNombresSecuencialesPaquete1HastaNPorDefecto(
+        self,
+    ) -> None:
+        """Verifica EARS-02.1: Los paquetes iniciales reciben nombres 'Paquete 1...N' por defecto sin pedirlos."""
+        integrantesDatos = (
+            {
+                "cedula": "0955555555",
+                "nombre": "Deivy Prudente",
+                "cargo": CargoIntegrante.INGENIERO_QA.value,
+            },
+        )
+
+        proyecto = construirEntidadProyecto(
+            nombre="Iniciativa Calidad",
+            tipo=TipoProyecto.INVESTIGACION_ACADEMICA,
+            numPaquetes=4,
+            integrantes=integrantesDatos,
+            proyectosExistentes=(),
+        )
+
+        assert len(proyecto.paquetes) == 4
+        nombresEsperados = [f"Paquete {i}" for i in range(1, 5)]
+        assert [p.nombre for p in proyecto.paquetes] == nombresEsperados
+        idsEsperados = [f"PAQ-{i:03d}" for i in range(1, 5)]
+        assert [p.idPaquete for p in proyecto.paquetes] == idsEsperados
+
+    def testModalRechazaEntradasInvalidasResaltandoErroresSinCerrar(
+        self,
+    ) -> None:
+        """Verifica EARS-02.3: Entradas invalidas generan mapa de errores resaltando campos sin cerrar modal."""
+        existente = _fabricarProyectoEjemplo(nombre="Proyecto Alpha")
+
+        # Caso 1: Nombre vacio
+        erroresVacio = validarFormularioProyecto(
+            nombre="",
+            numPaquetes=1,
+            integrantes=(
+                {
+                    "cedula": "0911111111",
+                    "nombre": "Ana Perez",
+                    "cargo": CargoIntegrante.LIDER_PROYECTO.value,
+                },
+            ),
+            proyectosExistentes=(),
+        )
+        assert "nombre" in erroresVacio
+
+        # Caso 2: Nombre duplicado (case-insensitive)
+        erroresDuplicado = validarFormularioProyecto(
+            nombre="proyecto alpha",
+            numPaquetes=1,
+            integrantes=(
+                {
+                    "cedula": "0911111111",
+                    "nombre": "Ana Perez",
+                    "cargo": CargoIntegrante.LIDER_PROYECTO.value,
+                },
+            ),
+            proyectosExistentes=(existente,),
+        )
+        assert "nombre" in erroresDuplicado
+
+        # Caso 3: Cedula con letras o longitud invalida
+        erroresCedula = validarFormularioProyecto(
+            nombre="Nuevo Proyecto",
+            numPaquetes=1,
+            integrantes=(
+                {
+                    "cedula": "12345",
+                    "nombre": "Ana Perez",
+                    "cargo": CargoIntegrante.LIDER_PROYECTO.value,
+                },
+            ),
+            proyectosExistentes=(),
+        )
+        assert "cedula_0" in erroresCedula
+
+        # Caso 4: Nombre de integrante con numeros
+        erroresNombreInteg = validarFormularioProyecto(
+            nombre="Nuevo Proyecto",
+            numPaquetes=1,
+            integrantes=(
+                {
+                    "cedula": "0912345678",
+                    "nombre": "Ana123",
+                    "cargo": CargoIntegrante.LIDER_PROYECTO.value,
+                },
+            ),
+            proyectosExistentes=(),
+        )
+        assert "nombre_0" in erroresNombreInteg
+
+        # Caso 5: Cedulas duplicadas dentro del mismo proyecto
+        erroresCedulaRepetida = validarFormularioProyecto(
+            nombre="Nuevo Proyecto",
+            numPaquetes=1,
+            integrantes=(
+                {
+                    "cedula": "0912345678",
+                    "nombre": "Ana Perez",
+                    "cargo": CargoIntegrante.LIDER_PROYECTO.value,
+                },
+                {
+                    "cedula": "0912345678",
+                    "nombre": "Luis Gomez",
+                    "cargo": CargoIntegrante.DESARROLLADOR_BACKEND.value,
+                },
+            ),
+            proyectosExistentes=(),
+        )
+        assert "cedula_1" in erroresCedulaRepetida
+
+        # Renderizar con errores y verificar que los mensajes se exhiben en el DOM
+        vdom = renderizarModalCreacionProyecto(
+            nombre="",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            numPaquetes=1,
+            integrantes=(
+                {
+                    "cedula": "123",
+                    "nombre": "Carlos",
+                    "cargo": CargoIntegrante.LIDER_PROYECTO.value,
+                },
+            ),
+            errores=erroresCedula,
+            alCambiarNombre=lambda _: None,
+            alCambiarTipo=lambda _: None,
+            alCambiarPaquetes=lambda _: None,
+            alActualizarIntegrante=lambda _i, _c, _v: None,
+            alAgregarIntegrante=lambda: None,
+            alEliminarIntegrante=lambda _: None,
+            alConfirmarGuardar=lambda: None,
+            alCerrar=lambda: None,
+        )
+
+        assert _buscarPorId(vdom, "contenedor-modal-creacion") is not None
+        assert _contieneTexto(
+            vdom, "La cédula debe contener exactamente 10 dígitos numéricos."
+        )
+
+    def testModalPersistenciaValidaInvocaCallbackGuardarYRedirige(self) -> None:
+        """Verifica EARS-02.4: Datos validos construyen la entidad Proyecto y llaman al callback alGuardar."""
+        integrantes = (
+            {
+                "cedula": "0912345678",
+                "nombre": "Pedro Ramirez",
+                "cargo": CargoIntegrante.ANALISTA_DATOS.value,
+            },
+        )
+
+        proyecto = construirEntidadProyecto(
+            nombre="Plataforma Big Data",
+            tipo=TipoProyecto.CIENCIA_DATOS_IA,
+            numPaquetes=2,
+            integrantes=integrantes,
+            proyectosExistentes=(),
+        )
+
+        assert proyecto.nombre == "Plataforma Big Data"
+        assert proyecto.tipo == TipoProyecto.CIENCIA_DATOS_IA
+        assert len(proyecto.paquetes) == 2
+        assert len(proyecto.integrantes) == 1
+        assert proyecto.integrantes[0].cedula == "0912345678"
+        assert proyecto.integrantes[0].cargo == CargoIntegrante.ANALISTA_DATOS
+
+    def testModalInteractivoReactPyRenderizaEstructuraCorrecta(self) -> None:
+        """Verifica que modalCreacionProyecto se monte en un Layout reactivo sin errores."""
+        from reactpy.core.layout import Layout
+
+        async def renderizarModal() -> Any:
+            async with Layout(
+                modalCreacionProyecto(
+                    alCerrar=lambda: None,
+                    alGuardar=lambda _: None,
+                    proyectosExistentes=(),
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizarModal())
+        assert _buscarPorId(modelo, "modal-creacion-proyecto-overlay") is not None
+        assert _buscarPorId(modelo, "btn-guardar-proyecto-confirmar") is not None
+        assert _buscarPorId(modelo, "btn-agregar-fila-integrante") is not None
