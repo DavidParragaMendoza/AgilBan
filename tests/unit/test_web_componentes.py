@@ -10,9 +10,18 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from app.core.edt import calcularEstadoPaquete
+from app.core.validador import (
+    validarCedula,
+    validarEliminacionIntegrante,
+    validarEliminacionPaquete,
+    validarNombreIntegrante,
+    validarNombrePaquete,
+)
 from app.domain.catalogos import (
     CargoIntegrante,
     EstadoKanban,
+    EstadoPaquete,
     PrioridadTarea,
     TipoProyecto,
 )
@@ -22,7 +31,21 @@ from app.domain.modelos import (
     Proyecto,
     Tarea,
 )
+from app.domain.monadas import Alguno
 from app.ui.web.app import componenteApp
+from app.ui.web.barraLateral import (
+    barraLateralEdt,
+    generarIdPaqueteSecuencial,
+    renderizarAlertaContextual,
+    renderizarConfirmacionEliminarIntegrante,
+    renderizarConfirmacionEliminarPaquete,
+    renderizarEncabezadoProyecto,
+    renderizarEstadoVacioEdt,
+    renderizarFilaNuevoPaquete,
+    renderizarFilaRenombrarPaquete,
+    renderizarFormularioNuevoIntegrante,
+    renderizarItemPaquete,
+)
 from app.ui.web.inicio import (
     filtrarProyectosPorNombre,
     renderizarVistaInicio,
@@ -549,3 +572,726 @@ class TestModalCreacionProyecto:
         assert _buscarPorId(modelo, "modal-creacion-proyecto-overlay") is not None
         assert _buscarPorId(modelo, "btn-guardar-proyecto-confirmar") is not None
         assert _buscarPorId(modelo, "btn-agregar-fila-integrante") is not None
+
+
+class TestBarraLateralEdt:
+    """Suite de pruebas unitarias para la Barra Lateral de EDT y Gestion de Equipo (Bloque 3)."""
+
+    def testUT_WEB_04_PaquetesConDiferentesEstadosRenderizaBadgesCorrectos(
+        self,
+    ) -> None:
+        """Verifica UT-WEB-04 / EARS-03.2: Calcula y exhibe los badges correctos para cada estado de paquete."""
+        # Paquete 1: Sin tareas
+        paqSinTareas = PaqueteTrabajo(
+            idPaquete="PAQ-001",
+            idProyecto="PROY-001",
+            nombre="Arquitectura Base",
+            tareas=(),
+        )
+        assert calcularEstadoPaquete(paqSinTareas) == EstadoPaquete.SIN_TAREAS
+
+        # Paquete 2: Pendiente (todas las tareas activas pendientes)
+        paqPendiente = PaqueteTrabajo(
+            idPaquete="PAQ-002",
+            idProyecto="PROY-001",
+            nombre="Seguridad y Auth",
+            tareas=(
+                Tarea(
+                    idTarea="TAR-010",
+                    idPaquete="PAQ-002",
+                    titulo="Configurar MFA",
+                    prioridad=PrioridadTarea.ALTA,
+                    estado=EstadoKanban.PENDIENTE,
+                    activo=True,
+                ),
+            ),
+        )
+        assert calcularEstadoPaquete(paqPendiente) == EstadoPaquete.PENDIENTE
+
+        # Paquete 3: En progreso (algunas pendientes, en revision o en progreso)
+        paqEnProgreso = PaqueteTrabajo(
+            idPaquete="PAQ-003",
+            idProyecto="PROY-001",
+            nombre="Modulo Pagos",
+            tareas=(
+                Tarea(
+                    idTarea="TAR-020",
+                    idPaquete="PAQ-003",
+                    titulo="Pasarela Stripe",
+                    prioridad=PrioridadTarea.CRITICA,
+                    estado=EstadoKanban.EN_PROGRESO,
+                    activo=True,
+                ),
+                Tarea(
+                    idTarea="TAR-021",
+                    idPaquete="PAQ-003",
+                    titulo="Notificaciones de pago",
+                    prioridad=PrioridadTarea.MEDIA,
+                    estado=EstadoKanban.PENDIENTE,
+                    activo=True,
+                ),
+            ),
+        )
+        assert calcularEstadoPaquete(paqEnProgreso) == EstadoPaquete.EN_PROGRESO
+
+        # Paquete 4: Terminado (todas las tareas activas terminadas)
+        paqTerminado = PaqueteTrabajo(
+            idPaquete="PAQ-004",
+            idProyecto="PROY-001",
+            nombre="Despliegue Cloud",
+            tareas=(
+                Tarea(
+                    idTarea="TAR-030",
+                    idPaquete="PAQ-004",
+                    titulo="Pipeline CI/CD",
+                    prioridad=PrioridadTarea.MEDIA,
+                    estado=EstadoKanban.TERMINADA,
+                    activo=True,
+                ),
+            ),
+        )
+        assert calcularEstadoPaquete(paqTerminado) == EstadoPaquete.TERMINADO
+
+        # Renderizar cada item y verificar el badge derivado exhibido
+        vdom1 = renderizarItemPaquete(
+            paquete=paqSinTareas,
+            estaSeleccionado=False,
+            alSeleccionarPaquete=lambda _: None,
+            alIniciarRenombrado=lambda _: None,
+            alSolicitarEliminar=lambda _: None,
+        )
+        vdom2 = renderizarItemPaquete(
+            paquete=paqPendiente,
+            estaSeleccionado=False,
+            alSeleccionarPaquete=lambda _: None,
+            alIniciarRenombrado=lambda _: None,
+            alSolicitarEliminar=lambda _: None,
+        )
+        vdom3 = renderizarItemPaquete(
+            paquete=paqEnProgreso,
+            estaSeleccionado=True,
+            alSeleccionarPaquete=lambda _: None,
+            alIniciarRenombrado=lambda _: None,
+            alSolicitarEliminar=lambda _: None,
+        )
+        vdom4 = renderizarItemPaquete(
+            paquete=paqTerminado,
+            estaSeleccionado=False,
+            alSeleccionarPaquete=lambda _: None,
+            alIniciarRenombrado=lambda _: None,
+            alSolicitarEliminar=lambda _: None,
+        )
+
+        badge1 = _buscarPorId(vdom1, "badge-estado-paquete-PAQ-001")
+        badge2 = _buscarPorId(vdom2, "badge-estado-paquete-PAQ-002")
+        badge3 = _buscarPorId(vdom3, "badge-estado-paquete-PAQ-003")
+        badge4 = _buscarPorId(vdom4, "badge-estado-paquete-PAQ-004")
+
+        assert badge1 is not None and _contieneTexto(badge1, "Sin Tareas")
+        assert badge2 is not None and _contieneTexto(badge2, "Pendiente")
+        assert badge3 is not None and _contieneTexto(badge3, "En progreso")
+        assert badge4 is not None and _contieneTexto(badge4, "Terminado")
+
+    def testSidebarEstadoVacioNavegableSinPaquetesEARS_03_9(self) -> None:
+        """Verifica EARS-03.9: MIENTRAS no existan paquetes, muestra estado vacio sin bloquear navegacion."""
+        llamadasNuevoPaquete: list[bool] = []
+        vdomVacio = renderizarEstadoVacioEdt(
+            alIniciarCreacionPaquete=lambda: llamadasNuevoPaquete.append(True)
+        )
+
+        assert _buscarPorId(vdomVacio, "sidebar-edt-vacio") is not None
+        assert _contieneTexto(vdomVacio, "Sin Paquetes EDT")
+
+        btnAgregar = _buscarPorId(vdomVacio, "btn-agregar-primer-paquete")
+        assert btnAgregar is not None
+        _dispararEvento(btnAgregar, "onClick")
+        assert len(llamadasNuevoPaquete) == 1
+
+        # Verificar que el encabezado del proyecto conserve los botones de navegacion
+        llamadasInicio: list[bool] = []
+        llamadasMetricas: list[bool] = []
+        proyectoSinPaquetes = Proyecto(
+            idProyecto="PROY-100",
+            nombre="Proyecto Inicial",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(),
+            integrantes=(),
+        )
+
+        vdomEncabezado = renderizarEncabezadoProyecto(
+            proyecto=proyectoSinPaquetes,
+            alVolverInicio=lambda: llamadasInicio.append(True),
+            alAbrirMetricas=lambda: llamadasMetricas.append(True),
+        )
+
+        btnVolver = _buscarPorId(vdomEncabezado, "btn-volver-mis-proyectos")
+        btnMetricas = _buscarPorId(vdomEncabezado, "btn-sidebar-metricas")
+
+        assert btnVolver is not None
+        assert btnMetricas is not None
+
+        _dispararEvento(btnVolver, "onClick")
+        assert len(llamadasInicio) == 1
+
+        _dispararEvento(btnMetricas, "onClick")
+        assert len(llamadasMetricas) == 1
+
+    def testSidebarSeleccionPaqueteActualizaEstadoGlobalEARS_03_3(self) -> None:
+        """Verifica EARS-03.3: Al hacer clic sobre un paquete, dispara el callback de seleccion."""
+        seleccionados: list[str] = []
+        paquete = PaqueteTrabajo(
+            idPaquete="PAQ-042",
+            idProyecto="PROY-001",
+            nombre="Infraestructura Kubernetes",
+            tareas=(),
+        )
+
+        vdom = renderizarItemPaquete(
+            paquete=paquete,
+            estaSeleccionado=False,
+            alSeleccionarPaquete=lambda pid: seleccionados.append(pid),
+            alIniciarRenombrado=lambda _: None,
+            alSolicitarEliminar=lambda _: None,
+        )
+
+        _dispararEvento(vdom, "onClick")
+        assert seleccionados == ["PAQ-042"]
+
+    def testSidebarBloqueoEliminacionPaqueteConTareasEARS_03_7(self) -> None:
+        """Verifica EARS-03.7: SI un paquete contiene tareas, se bloquea la eliminacion sin mutar la BD."""
+        paqueteConTareas = PaqueteTrabajo(
+            idPaquete="PAQ-010",
+            idProyecto="PROY-001",
+            nombre="Servicios Backend",
+            tareas=(
+                Tarea(
+                    idTarea="TAR-100",
+                    idPaquete="PAQ-010",
+                    titulo="API REST GraphQL",
+                    prioridad=PrioridadTarea.ALTA,
+                    estado=EstadoKanban.PENDIENTE,
+                    activo=True,
+                ),
+            ),
+        )
+
+        # 1. Validacion funcional pura en el core
+        resValidacion = validarEliminacionPaquete(paqueteConTareas)
+        assert resValidacion.esFallo()
+        assert resValidacion.error.codigo == "PAQUETE_CON_TAREAS"
+        assert "contiene tareas asociadas" in resValidacion.error.mensaje
+
+        # 2. Renderizado de la alerta contextual de bloqueo en el sidebar
+        vdomAlerta = renderizarAlertaContextual(
+            mensaje=resValidacion.error.mensaje,
+            alCerrar=lambda: None,
+        )
+        assert _buscarPorId(vdomAlerta, "alerta-contextual-sidebar") is not None
+        assert _contieneTexto(vdomAlerta, "contiene tareas asociadas")
+
+    def testSidebarPermiteEliminacionPaqueteSinTareasEARS_03_6(self) -> None:
+        """Verifica EARS-03.6: CUANDO un paquete no contiene ninguna tarea, se autoriza su eliminacion."""
+        paqueteVacio = PaqueteTrabajo(
+            idPaquete="PAQ-999",
+            idProyecto="PROY-001",
+            nombre="Documentacion Swagger",
+            tareas=(),
+        )
+
+        # 1. Validacion funcional pura
+        resValidacion = validarEliminacionPaquete(paqueteVacio)
+        assert resValidacion.esExito()
+        assert resValidacion.obtenerValor() == "PAQ-999"
+
+        # 2. Callback de eliminacion en el item
+        eliminados: list[str] = []
+        vdom = renderizarItemPaquete(
+            paquete=paqueteVacio,
+            estaSeleccionado=False,
+            alSeleccionarPaquete=lambda _: None,
+            alIniciarRenombrado=lambda _: None,
+            alSolicitarEliminar=lambda p: eliminados.append(p.idPaquete),
+        )
+
+        btnEliminar = _buscarPorId(vdom, "btn-eliminar-paquete-PAQ-999")
+        assert btnEliminar is not None
+        _dispararEvento(btnEliminar, "onClick")
+        assert eliminados == ["PAQ-999"]
+
+    def testSidebarValidacionNombrePaqueteYGeneracionId(self) -> None:
+        """Verifica EARS-03.4 y EARS-03.5: Validacion estricta de nombres y generacion correlativa."""
+        nombresExistentes = ("Paquete 1", "Paquete 2")
+
+        # Nombre vacio
+        assert validarNombrePaquete("", nombresExistentes).esFallo()
+        assert validarNombrePaquete("   ", nombresExistentes).esFallo()
+
+        # Nombre de mas de 80 caracteres
+        assert validarNombrePaquete("A" * 81, nombresExistentes).esFallo()
+
+        # Nombre duplicado (case-insensitive)
+        assert validarNombrePaquete("paquete 1", nombresExistentes).esFallo()
+        assert validarNombrePaquete("PAQUETE 2", nombresExistentes).esFallo()
+
+        # Nombre valido
+        resValido = validarNombrePaquete("  Modulo Facturacion  ", nombresExistentes)
+        assert resValido.esExito()
+        assert resValido.obtenerValor() == "Modulo Facturacion"
+
+        # Generacion de identificador correlativo
+        paqs = (
+            PaqueteTrabajo("PAQ-001", "PROY-1", "P1", ()),
+            PaqueteTrabajo("PAQ-002", "PROY-1", "P2", ()),
+        )
+        assert generarIdPaqueteSecuencial(paqs) == "PAQ-003"
+        assert generarIdPaqueteSecuencial(()) == "PAQ-001"
+
+    def testSidebarGestionEquipoBloqueoEliminacionTareasActivasEARS_03_8(self) -> None:
+        """Verifica EARS-03.8: Bloquea eliminar integrante si posee tareas activas asignadas."""
+        integ1 = Integrante(
+            cedula="0928374651",
+            idProyecto="PROY-001",
+            nombre="Carlos Bernabe",
+            cargo=CargoIntegrante.LIDER_PROYECTO,
+        )
+        integ2 = Integrante(
+            cedula="0928374652",
+            idProyecto="PROY-001",
+            nombre="Javier Infante",
+            cargo=CargoIntegrante.DESARROLLADOR_FULLSTACK,
+        )
+
+        tareaAsignada = Tarea(
+            idTarea="TAR-001",
+            idPaquete="PAQ-001",
+            titulo="Implementar backend",
+            prioridad=PrioridadTarea.ALTA,
+            estado=EstadoKanban.EN_PROGRESO,
+            activo=True,
+            cedulaResponsable=Alguno("0928374651"),
+        )
+
+        # Intento de eliminar a integ1 con tareas activas asignadas -> BLOQUEADO
+        res1 = validarEliminacionIntegrante(
+            cedula="0928374651",
+            integrantes=(integ1, integ2),
+            tareas=(tareaAsignada,),
+        )
+        assert res1.esFallo()
+        assert res1.error.codigo == "INTEGRANTE_CON_TAREAS_ACTIVAS"
+
+        # Intento de eliminar a integ2 sin tareas activas asignadas -> PERMITIDO
+        res2 = validarEliminacionIntegrante(
+            cedula="0928374652",
+            integrantes=(integ1, integ2),
+            tareas=(tareaAsignada,),
+        )
+        assert res2.esExito()
+        assert res2.obtenerValor() == "0928374652"
+
+    def testSidebarGestionEquipoBloqueoEliminacionUltimoIntegranteEARS_03_8(
+        self,
+    ) -> None:
+        """Verifica EARS-03.8: Bloquea eliminar al unico integrante restante del proyecto."""
+        integUnico = Integrante(
+            cedula="0912345678",
+            idProyecto="PROY-001",
+            nombre="Unico Miembro",
+            cargo=CargoIntegrante.LIDER_PROYECTO,
+        )
+
+        res = validarEliminacionIntegrante(
+            cedula="0912345678",
+            integrantes=(integUnico,),
+            tareas=(),
+        )
+        assert res.esFallo()
+        assert res.error.codigo == "ULTIMO_INTEGRANTE"
+        assert "único integrante" in res.error.mensaje
+
+    def testSidebarFormularioNuevoIntegranteValidaciones(self) -> None:
+        """Verifica las validaciones de cedula, nombre y cargo para nuevos integrantes."""
+        cedulasExistentes = ("0912345678",)
+
+        # Cedula invalida (no tiene 10 digitos o contiene letras)
+        assert validarCedula("12345", cedulasExistentes).esFallo()
+        assert validarCedula("091234567A", cedulasExistentes).esFallo()
+
+        # Cedula repetida
+        assert validarCedula("0912345678", cedulasExistentes).esFallo()
+
+        # Cedula valida
+        resCed = validarCedula("0928374651", cedulasExistentes)
+        assert resCed.esExito()
+        assert resCed.obtenerValor() == "0928374651"
+
+        # Nombre con numeros o vacio
+        assert validarNombreIntegrante("").esFallo()
+        assert validarNombreIntegrante("Carlos123").esFallo()
+
+        # Nombre valido
+        resNom = validarNombreIntegrante("Carlos Bernabé")
+        assert resNom.esExito()
+        assert resNom.obtenerValor() == "Carlos Bernabé"
+
+        # Renderizar formulario de nuevo integrante y verificar inputs
+        vdomForm = renderizarFormularioNuevoIntegrante(
+            cedula="",
+            nombre="",
+            cargo=CargoIntegrante.DESARROLLADOR_FULLSTACK.value,
+            errores={"cedula": "Error de cédula", "nombre": "Error de nombre"},
+            alCambiarCedula=lambda _: None,
+            alCambiarNombre=lambda _: None,
+            alCambiarCargo=lambda _: None,
+            alGuardar=lambda: None,
+            alCancelar=lambda: None,
+        )
+        assert _buscarPorId(vdomForm, "formulario-nuevo-integrante") is not None
+        assert _buscarPorId(vdomForm, "input-cedula-integrante") is not None
+        assert _buscarPorId(vdomForm, "input-nombre-integrante") is not None
+        assert _buscarPorId(vdomForm, "select-cargo-integrante") is not None
+        assert _contieneTexto(vdomForm, "Error de cédula")
+        assert _contieneTexto(vdomForm, "Error de nombre")
+
+    def testSidebarComponenteReactPyMontajeCompleto(self) -> None:
+        """Verifica que barraLateralEdt se monte como componente ReactPy en un Layout sin errores."""
+        from reactpy.core.layout import Layout
+
+        proyecto = _fabricarProyectoEjemplo(
+            idProyecto="PROY-777",
+            nombre="App Banca Digital",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+        )
+
+        async def renderizarSidebar() -> Any:
+            async with Layout(
+                barraLateralEdt(
+                    proyecto=proyecto,
+                    idPaqueteSeleccionado="PAQ-001",
+                    alSeleccionarPaquete=lambda _: None,
+                    alAgregarPaquete=lambda _: None,
+                    alRenombrarPaquete=lambda _i, _n: None,
+                    alEliminarPaquete=lambda _: None,
+                    alVolverInicio=lambda: None,
+                    alAbrirMetricas=lambda: None,
+                    alAgregarIntegrante=lambda _: None,
+                    alEliminarIntegrante=lambda _: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizarSidebar())
+        assert _buscarPorId(modelo, "panel-lateral-edt-sidebar") is not None
+        assert _buscarPorId(modelo, "encabezado-sidebar-proyecto") is not None
+        assert _buscarPorId(modelo, "titulo-proyecto-sidebar") is not None
+        assert _buscarPorId(modelo, "seccion-equipo-sidebar") is not None
+        assert _buscarPorId(modelo, "item-paquete-PAQ-001") is not None
+
+    def testSidebarFormulariosEnLineaNuevoYRenombrarPaquete(self) -> None:
+        """Verifica el renderizado de los formularios en linea para crear y renombrar paquetes."""
+        valoresNuevo: list[str] = []
+        guardadosNuevo: list[bool] = []
+        canceladosNuevo: list[bool] = []
+
+        vdomNuevo = renderizarFilaNuevoPaquete(
+            nombre="Paquete Alpha",
+            error="Error nombre",
+            alCambiarNombre=lambda v: valoresNuevo.append(v),
+            alGuardar=lambda: guardadosNuevo.append(True),
+            alCancelar=lambda: canceladosNuevo.append(True),
+        )
+
+        assert _buscarPorId(vdomNuevo, "formulario-nuevo-paquete") is not None
+        assert _buscarPorId(vdomNuevo, "input-nombre-nuevo-paquete") is not None
+        assert _contieneTexto(vdomNuevo, "Error nombre")
+
+        _dispararEvento(_buscarPorId(vdomNuevo, "btn-guardar-nuevo-paquete"), "onClick")
+        assert len(guardadosNuevo) == 1
+
+        _dispararEvento(
+            _buscarPorId(vdomNuevo, "btn-cancelar-nuevo-paquete"), "onClick"
+        )
+        assert len(canceladosNuevo) == 1
+
+        guardadosRenombrar: list[bool] = []
+        canceladosRenombrar: list[bool] = []
+        vdomRenombrar = renderizarFilaRenombrarPaquete(
+            idPaquete="PAQ-001",
+            nombre="Paquete Renombrado",
+            error="Error unicidad",
+            alCambiarNombre=lambda _: None,
+            alGuardar=lambda: guardadosRenombrar.append(True),
+            alCancelar=lambda: canceladosRenombrar.append(True),
+        )
+
+        assert (
+            _buscarPorId(vdomRenombrar, "formulario-renombrar-paquete-PAQ-001")
+            is not None
+        )
+        assert (
+            _buscarPorId(vdomRenombrar, "input-renombrar-paquete-PAQ-001") is not None
+        )
+        assert _contieneTexto(vdomRenombrar, "Error unicidad")
+
+        _dispararEvento(
+            _buscarPorId(vdomRenombrar, "btn-guardar-renombrar-PAQ-001"), "onClick"
+        )
+        assert len(guardadosRenombrar) == 1
+
+        _dispararEvento(
+            _buscarPorId(vdomRenombrar, "btn-cancelar-renombrar-PAQ-001"), "onClick"
+        )
+        assert len(canceladosRenombrar) == 1
+
+    def testWorkspaceIntegracionBarraLateralEnComponenteApp(self) -> None:
+        """Verifica la integracion del Workspace con barraLateralEdt dentro de componenteApp."""
+        import sqlite3
+
+        from reactpy.core.layout import Layout
+
+        from app.adapters.esquemaSqlite import inicializarEsquema
+        from app.adapters.repositorioSqlite import guardarProyectoCompleto
+
+        conexion = sqlite3.connect(":memory:")
+        inicializarEsquema(conexion)
+
+        proyecto = _fabricarProyectoEjemplo(
+            idProyecto="PROY-555",
+            nombre="Sistema de Pagos",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+        )
+        guardarProyectoCompleto(conexion, proyecto)
+
+        async def renderizarWorkspace() -> Any:
+            async with Layout(componenteApp(conexion=conexion)) as layout:
+                update = await layout.render()
+                model = update["model"]
+                btnWs = _buscarPorId(model, "nav-item-workspace")
+                assert btnWs is not None
+                target_id = btnWs["eventHandlers"]["onClick"]["target"]
+                await layout.deliver(
+                    {"type": "layout-event", "target": target_id, "data": [{}]}
+                )
+                update2 = await layout.render()
+                return update2["model"]
+
+        modeloWs = asyncio.run(renderizarWorkspace())
+        assert _buscarPorId(modeloWs, "vista-workspace-contenedor") is not None
+        assert _buscarPorId(modeloWs, "panel-lateral-edt-sidebar") is not None
+        assert _buscarPorId(modeloWs, "area-central-workspace") is not None
+        assert _buscarPorId(modeloWs, "cabecera-paquete-activo") is not None
+        assert _contieneTexto(modeloWs, "Sistema de Pagos")
+
+    def testSidebarConfirmacionEliminarIntegrante(self) -> None:
+        """Verifica el cuadro de confirmacion previa antes de eliminar un integrante del equipo."""
+        integ = Integrante(
+            cedula="0912345678",
+            idProyecto="PROY-001",
+            nombre="Carlos Bernabé",
+            cargo=CargoIntegrante.LIDER_PROYECTO,
+        )
+
+        confirmados: list[bool] = []
+        cancelados: list[bool] = []
+
+        vdom = renderizarConfirmacionEliminarIntegrante(
+            integrante=integ,
+            alConfirmar=lambda: confirmados.append(True),
+            alCancelar=lambda: cancelados.append(True),
+        )
+
+        assert (
+            _buscarPorId(vdom, "confirmacion-eliminar-integrante-0912345678")
+            is not None
+        )
+        assert _contieneTexto(vdom, "¿Eliminar integrante del equipo?")
+        assert _contieneTexto(vdom, "Carlos Bernabé")
+
+        btnConfirmar = _buscarPorId(vdom, "btn-confirmar-eliminar-0912345678")
+        btnCancelar = _buscarPorId(vdom, "btn-cancelar-eliminar-0912345678")
+        assert btnConfirmar is not None
+        assert btnCancelar is not None
+
+        _dispararEvento(btnConfirmar, "onClick")
+        assert len(confirmados) == 1
+
+        _dispararEvento(btnCancelar, "onClick")
+        assert len(cancelados) == 1
+
+    def testSidebarConfirmacionEliminarPaquete(self) -> None:
+        """Verifica el cuadro de confirmacion para eliminar un paquete de trabajo sin tareas."""
+        paq = PaqueteTrabajo(
+            idPaquete="PAQ-001",
+            idProyecto="PROY-001",
+            nombre="Modulo Facturacion",
+            tareas=(),
+        )
+
+        confirmados: list[bool] = []
+        cancelados: list[bool] = []
+
+        vdom = renderizarConfirmacionEliminarPaquete(
+            paquete=paq,
+            alConfirmar=lambda: confirmados.append(True),
+            alCancelar=lambda: cancelados.append(True),
+        )
+
+        assert _buscarPorId(vdom, "confirmacion-eliminar-paquete-PAQ-001") is not None
+        assert _contieneTexto(vdom, "¿Eliminar 'Modulo Facturacion'?")
+
+        btnConfirmar = _buscarPorId(vdom, "btn-confirmar-eliminar-paquete-PAQ-001")
+        btnCancelar = _buscarPorId(vdom, "btn-cancelar-eliminar-paquete-PAQ-001")
+        assert btnConfirmar is not None
+        assert btnCancelar is not None
+
+        _dispararEvento(btnConfirmar, "onClick")
+        assert len(confirmados) == 1
+
+        _dispararEvento(btnCancelar, "onClick")
+        assert len(cancelados) == 1
+
+    def testWorkspaceReactividadAgregarYEliminarIntegranteSinRecargar(
+        self,
+    ) -> None:
+        """Verifica la reactividad inmediata al agregar y eliminar integrantes en el Workspace sin recargar."""
+        import sqlite3
+
+        from reactpy.core.layout import Layout
+
+        from app.adapters.esquemaSqlite import inicializarEsquema
+        from app.adapters.repositorioSqlite import guardarProyectoCompleto
+
+        conexion = sqlite3.connect(":memory:")
+        inicializarEsquema(conexion)
+
+        proyecto = _fabricarProyectoEjemplo(
+            idProyecto="PROY-900",
+            nombre="Portal Financiero",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+        )
+        guardarProyectoCompleto(conexion, proyecto)
+
+        async def flujoReactivo() -> None:
+            async with Layout(componenteApp(conexion=conexion)) as layout:
+                # 1. Render inicial y navegacion al Workspace
+                update1 = await layout.render()
+                btnWs = _buscarPorId(update1["model"], "nav-item-workspace")
+                assert btnWs is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnWs["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+                updateWs = await layout.render()
+                modelWs = updateWs["model"]
+                assert _contieneTexto(modelWs, "Portal Financiero")
+                assert not _contieneTexto(modelWs, "David Gomez")
+
+                # 2. Abrir formulario de nuevo integrante en la barra lateral
+                btnAbrir = _buscarPorId(modelWs, "btn-abrir-formulario-integrante")
+                assert btnAbrir is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnAbrir["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+                updateForm = await layout.render()
+                modelForm = updateForm["model"]
+
+                # 3. Ingresar datos del nuevo integrante
+                inputCedula = _buscarPorId(modelForm, "input-cedula-integrante")
+                assert inputCedula is not None
+
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": inputCedula["eventHandlers"]["onChange"]["target"],
+                        "data": [{"target": {"value": "0999887766"}}],
+                    }
+                )
+                upCed = await layout.render()
+                inputNombreActualizado = _buscarPorId(
+                    upCed["model"], "input-nombre-integrante"
+                )
+                assert inputNombreActualizado is not None
+
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": inputNombreActualizado["eventHandlers"]["onChange"][
+                            "target"
+                        ],
+                        "data": [{"target": {"value": "David Gomez"}}],
+                    }
+                )
+                upNom = await layout.render()
+                btnGuardar = _buscarPorId(upNom["model"], "btn-guardar-integrante")
+                assert btnGuardar is not None
+
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnGuardar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+                # 4. Verificar que David Gomez aparece INMEDIATAMENTE sin recargar la pagina
+                await layout.render()
+                updateAgregado = await layout.render()
+                modelAgregado = updateAgregado["model"]
+                assert _contieneTexto(modelAgregado, "David Gomez")
+                assert _contieneTexto(modelAgregado, "0999887766")
+
+                # 5. Solicitar eliminacion de David Gomez
+                btnEliminar = _buscarPorId(
+                    modelAgregado, "btn-eliminar-integrante-0999887766"
+                )
+                assert btnEliminar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnEliminar["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+                # 6. Verificar que aparece el dialogo de confirmacion
+                updateConfirm = await layout.render()
+                modelConfirm = updateConfirm["model"]
+                assert (
+                    _buscarPorId(
+                        modelConfirm,
+                        "confirmacion-eliminar-integrante-0999887766",
+                    )
+                    is not None
+                )
+
+                # 7. Confirmar eliminacion y verificar remocion inmediata del DOM
+                btnConfirmarEliminar = _buscarPorId(
+                    modelConfirm, "btn-confirmar-eliminar-0999887766"
+                )
+                assert btnConfirmarEliminar is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnConfirmarEliminar["eventHandlers"]["onClick"][
+                            "target"
+                        ],
+                        "data": [{}],
+                    }
+                )
+
+                await layout.render()
+                updateFinal = await layout.render()
+                modelFinal = updateFinal["model"]
+                assert not _contieneTexto(modelFinal, "David Gomez")
+
+        asyncio.run(flujoReactivo())

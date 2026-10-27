@@ -10,25 +10,34 @@ clave idempotente de creacion y confirmacion de cierre de panel.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
 from reactpy import component, html, use_state
 
 from app.adapters.repositorioSqlite import (
+    actualizarNombrePaquete,
+    eliminarIntegrante,
+    eliminarPaqueteVacio,
     guardarProyectoCompleto,
     recuperarProyectos,
 )
+from app.core.edt import (
+    calcularEstadoPaquete,
+    obtenerTareasActivas,
+)
 from app.domain.catalogos import EstadoKanban
-from app.domain.modelos import Proyecto, Tarea
+from app.domain.modelos import Integrante, PaqueteTrabajo, Proyecto, Tarea
 from app.domain.monadas import Alguno, Ninguno, Opcion
+from app.ui.web.barraLateral import barraLateralEdt
 from app.ui.web.estilos import (
     BORDE_SUAVE,
     BOTON_PRIMARIO,
     FONDO_LIENZO,
     FONDO_SUPERFICIE,
     INDICADOR_GUARDADO,
+    obtenerClaseEstadoPaquete,
 )
 from app.ui.web.inicio import vistaInicio
 from app.ui.web.modalProyecto import modalCreacionProyecto
@@ -82,6 +91,10 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
         _castOpcion(Ninguno(), SolicitudCreacionTarea)
     )
     cierrePendiente, setCierrePendiente = use_state(False)
+    versionDatos, setVersionDatos = use_state(0)
+
+    def forzarActualizacion() -> None:
+        setVersionDatos(lambda v: v + 1)
 
     # -------------------------------------------------------------------------
     # 2. Acciones y Callbacks Puros de Navegacion SPA
@@ -275,48 +288,322 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
             )
 
         if vistaActiva == "WORKSPACE":
-            return html.main(
-                {
-                    "id": "vista-workspace-contenedor",
-                    "className": "flex-1 flex flex-col overflow-hidden animate-in fade-in duration-150",
-                },
-                html.div(
+            proyectosActuales: tuple[Proyecto, ...] = ()
+            if conexion is not None:
+                resRecuperacion = recuperarProyectos(conexion)
+                if resRecuperacion.esExito():
+                    proyectosActuales = resRecuperacion.obtenerValor()
+
+            proyectoActivo: Proyecto | None = None
+            if idProyectoActivo.esAlguno():
+                proyectoActivo = next(
+                    (
+                        p
+                        for p in proyectosActuales
+                        if p.idProyecto == idProyectoActivo.obtenerValor()
+                    ),
+                    None,
+                )
+            if proyectoActivo is None and len(proyectosActuales) > 0:
+                proyectoActivo = proyectosActuales[0]
+
+            if proyectoActivo is None:
+                return html.main(
                     {
-                        "className": "flex-1 flex items-center justify-center p-8 text-center"
+                        "id": "vista-workspace-contenedor",
+                        "className": (
+                            "flex-1 flex flex-col overflow-hidden animate-in fade-in duration-150"
+                        ),
                     },
                     html.div(
                         {
-                            "className": (
-                                "max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border "
-                                "border-slate-200 space-y-4"
-                            )
+                            "className": "flex-1 flex items-center justify-center p-8 text-center"
                         },
                         html.div(
                             {
                                 "className": (
-                                    "w-12 h-12 bg-emerald-50 text-emerald-600 rounded-xl flex items-center "
-                                    "justify-center mx-auto text-xl font-bold"
+                                    "max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border "
+                                    "border-slate-200 space-y-4"
                                 )
                             },
-                            "📋",
-                        ),
-                        html.h2(
-                            {"className": "text-lg font-semibold text-slate-800"},
-                            "Espacio de Trabajo (Workspace)",
-                        ),
-                        html.p(
-                            {"className": "text-sm text-slate-500 leading-relaxed"},
-                            "Tablero Kanban de 4 columnas delimitadas y desglose de paquetes EDT.",
-                        ),
-                        html.button(
-                            {
-                                "id": "btn-volver-a-inicio-desde-ws",
-                                "onClick": navegarAInicio,
-                                "className": "text-sm text-indigo-600 font-medium hover:underline",
-                            },
-                            "← Volver a Mis Proyectos",
+                            html.div(
+                                {
+                                    "className": (
+                                        "w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center "
+                                        "justify-center mx-auto text-xl font-bold"
+                                    )
+                                },
+                                "📁",
+                            ),
+                            html.h2(
+                                {"className": "text-lg font-semibold text-slate-800"},
+                                "No hay proyecto seleccionado",
+                            ),
+                            html.p(
+                                {"className": "text-sm text-slate-500 leading-relaxed"},
+                                "Selecciona un proyecto desde la pantalla de inicio o crea uno nuevo.",
+                            ),
+                            html.button(
+                                {
+                                    "id": "btn-volver-a-inicio-desde-ws",
+                                    "onClick": navegarAInicio,
+                                    "className": "text-sm text-indigo-600 font-medium hover:underline",
+                                },
+                                "← Volver a Mis Proyectos",
+                            ),
                         ),
                     ),
+                )
+
+            idPaqueteActual = ""
+            if idPaqueteSeleccionado.esAlguno() and any(
+                p.idPaquete == idPaqueteSeleccionado.obtenerValor()
+                for p in proyectoActivo.paquetes
+            ):
+                idPaqueteActual = idPaqueteSeleccionado.obtenerValor()
+            elif len(proyectoActivo.paquetes) > 0:
+                idPaqueteActual = proyectoActivo.paquetes[0].idPaquete
+
+            paqueteActivo = next(
+                (p for p in proyectoActivo.paquetes if p.idPaquete == idPaqueteActual),
+                None,
+            )
+
+            def agregarPaqueteWorkspace(nuevoPaquete: PaqueteTrabajo) -> None:
+                if conexion is not None and proyectoActivo is not None:
+                    nuevoProyecto = replace(
+                        proyectoActivo,
+                        paquetes=proyectoActivo.paquetes + (nuevoPaquete,),
+                    )
+                    guardarProyectoCompleto(conexion, nuevoProyecto)
+                setIdPaqueteSeleccionado(Alguno(nuevoPaquete.idPaquete))
+                forzarActualizacion()
+
+            def renombrarPaqueteWorkspace(idPaquete: str, nuevoNombre: str) -> None:
+                if conexion is not None:
+                    actualizarNombrePaquete(conexion, idPaquete, nuevoNombre)
+                forzarActualizacion()
+
+            def eliminarPaqueteWorkspace(idPaquete: str) -> None:
+                if conexion is not None:
+                    eliminarPaqueteVacio(conexion, idPaquete)
+                if (
+                    idPaqueteSeleccionado.esAlguno()
+                    and idPaqueteSeleccionado.obtenerValor() == idPaquete
+                ):
+                    restantes = tuple(
+                        p.idPaquete
+                        for p in proyectoActivo.paquetes
+                        if p.idPaquete != idPaquete
+                    )
+                    if restantes:
+                        setIdPaqueteSeleccionado(Alguno(restantes[0]))
+                    else:
+                        setIdPaqueteSeleccionado(_castOpcion(Ninguno(), str))
+                forzarActualizacion()
+
+            def agregarIntegranteWorkspace(nuevoIntegrante: Integrante) -> None:
+                if conexion is not None and proyectoActivo is not None:
+                    nuevoProyecto = replace(
+                        proyectoActivo,
+                        integrantes=proyectoActivo.integrantes + (nuevoIntegrante,),
+                    )
+                    guardarProyectoCompleto(conexion, nuevoProyecto)
+                forzarActualizacion()
+
+            def eliminarIntegranteWorkspace(cedula: str) -> None:
+                if conexion is not None and proyectoActivo is not None:
+                    eliminarIntegrante(conexion, cedula, proyectoActivo.idProyecto)
+                forzarActualizacion()
+
+            def renderizarAreaCentralWorkspace(
+                proyecto: Proyecto, paquete: PaqueteTrabajo | None
+            ) -> Any:
+                if paquete is None:
+                    return html.div(
+                        {
+                            "id": "workspace-sin-paquetes-area",
+                            "className": "flex-1 flex items-center justify-center p-8 text-center",
+                        },
+                        html.div(
+                            {
+                                "className": (
+                                    "max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border "
+                                    "border-slate-200 space-y-4"
+                                )
+                            },
+                            html.div(
+                                {
+                                    "className": (
+                                        "w-12 h-12 bg-amber-50 text-amber-600 rounded-xl flex items-center "
+                                        "justify-center mx-auto text-xl font-bold"
+                                    )
+                                },
+                                "📦",
+                            ),
+                            html.h2(
+                                {"className": "text-lg font-semibold text-slate-800"},
+                                "Proyecto sin Paquetes EDT",
+                            ),
+                            html.p(
+                                {"className": "text-sm text-slate-500 leading-relaxed"},
+                                "Agrega tu primer paquete de trabajo desde la barra lateral para comenzar a gestionar tareas en el tablero Kanban.",
+                            ),
+                            html.button(
+                                {
+                                    "id": "btn-volver-a-inicio-desde-ws",
+                                    "onClick": navegarAInicio,
+                                    "className": "text-sm text-indigo-600 font-medium hover:underline",
+                                },
+                                "← Volver a Mis Proyectos",
+                            ),
+                        ),
+                    )
+
+                estadoDerivado = calcularEstadoPaquete(paquete)
+                claseBadge = obtenerClaseEstadoPaquete(estadoDerivado)
+                tareasActivas = obtenerTareasActivas(paquete)
+
+                return html.div(
+                    {
+                        "id": "workspace-contenido-paquete",
+                        "className": "flex-1 flex flex-col h-full overflow-hidden",
+                    },
+                    html.header(
+                        {
+                            "id": "cabecera-paquete-activo",
+                            "className": (
+                                "bg-white border-b border-slate-200 px-6 py-4 flex items-center "
+                                "justify-between shadow-sm z-10"
+                            ),
+                        },
+                        html.div(
+                            {"className": "space-y-1 min-w-0"},
+                            html.div(
+                                {
+                                    "className": "flex items-center space-x-2 text-xs text-slate-400"
+                                },
+                                html.span(
+                                    {
+                                        "id": "breadcrumb-proyecto",
+                                        "className": "font-medium text-slate-500 truncate",
+                                    },
+                                    proyecto.nombre,
+                                ),
+                                html.span("/"),
+                                html.span(
+                                    {"className": "font-semibold text-indigo-600"},
+                                    paquete.idPaquete,
+                                ),
+                            ),
+                            html.div(
+                                {"className": "flex items-center space-x-3"},
+                                html.h1(
+                                    {
+                                        "id": "titulo-paquete-activo",
+                                        "className": "text-xl font-bold text-slate-900 truncate",
+                                    },
+                                    paquete.nombre,
+                                ),
+                                html.span(
+                                    {
+                                        "id": "badge-estado-paquete-activo",
+                                        "className": claseBadge,
+                                    },
+                                    estadoDerivado.value,
+                                ),
+                                html.span(
+                                    {
+                                        "id": "conteo-tareas-paquete-activo",
+                                        "className": (
+                                            "text-xs text-slate-400 font-medium px-2 py-0.5 rounded bg-slate-100"
+                                        ),
+                                    },
+                                    f"{len(tareasActivas)} tareas activas",
+                                ),
+                            ),
+                        ),
+                        html.div(
+                            {"className": "flex items-center space-x-3"},
+                            html.button(
+                                {
+                                    "id": "btn-nueva-tarea-kanban",
+                                    "className": BOTON_PRIMARIO,
+                                },
+                                "+ Nueva Tarea",
+                            ),
+                        ),
+                    ),
+                    html.div(
+                        {
+                            "id": "tablero-kanban-area",
+                            "className": "flex-1 overflow-x-auto p-6 flex gap-6 bg-slate-50",
+                        },
+                        html.div(
+                            {
+                                "className": (
+                                    "flex-1 flex items-center justify-center p-8 text-center border-2 "
+                                    "border-dashed border-slate-200 rounded-2xl m-4 bg-white/50"
+                                )
+                            },
+                            html.div(
+                                {"className": "max-w-md space-y-2"},
+                                html.div(
+                                    {
+                                        "className": (
+                                            "w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center "
+                                            "justify-center mx-auto text-lg font-bold"
+                                        )
+                                    },
+                                    "📌",
+                                ),
+                                html.h3(
+                                    {
+                                        "className": "text-sm font-bold text-slate-800 uppercase tracking-wider"
+                                    },
+                                    f"Tablero Kanban — {paquete.nombre}",
+                                ),
+                                html.p(
+                                    {
+                                        "className": "text-xs text-slate-500 leading-relaxed"
+                                    },
+                                    (
+                                        f"Visualización de las 4 columnas delimitadas con {len(tareasActivas)} "
+                                        "tareas activas para este paquete."
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+
+            return html.main(
+                {
+                    "id": "vista-workspace-contenedor",
+                    "className": (
+                        "flex-1 flex flex-row overflow-hidden animate-in fade-in duration-150"
+                    ),
+                },
+                barraLateralEdt(
+                    proyecto=proyectoActivo,
+                    idPaqueteSeleccionado=idPaqueteActual,
+                    alSeleccionarPaquete=seleccionarPaquete,
+                    alAgregarPaquete=agregarPaqueteWorkspace,
+                    alRenombrarPaquete=renombrarPaqueteWorkspace,
+                    alEliminarPaquete=eliminarPaqueteWorkspace,
+                    alVolverInicio=navegarAInicio,
+                    alAbrirMetricas=navegarAMetricas,
+                    alAgregarIntegrante=agregarIntegranteWorkspace,
+                    alEliminarIntegrante=eliminarIntegranteWorkspace,
+                ),
+                html.div(
+                    {
+                        "id": "area-central-workspace",
+                        "className": (
+                            "flex-1 flex flex-col overflow-y-auto bg-slate-50 min-w-0"
+                        ),
+                    },
+                    renderizarAreaCentralWorkspace(proyectoActivo, paqueteActivo),
                 ),
             )
 
@@ -377,6 +664,7 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
             setIdPaqueteSeleccionado(Alguno(nuevoProyecto.paquetes[0].idPaquete))
         setVistaActiva("WORKSPACE")
         setModalCreacionAbierto(False)
+        forzarActualizacion()
 
     # -------------------------------------------------------------------------
     # 5. Renderizado de Modales y Superposiciones
@@ -417,6 +705,7 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
         "data-solicitud": str(solicitudCreacionTarea.esAlguno()),
         "data-cierre-pendiente": str(cierrePendiente),
         "data-has-conexion": str(conexion is not None),
+        "data-version-datos": str(versionDatos),
     }
 
     # Registro de referencia para callbacks de ciclo de vida completo
