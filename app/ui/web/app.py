@@ -51,6 +51,7 @@ from app.ui.web.modalProyecto import modalCreacionProyecto
 from app.ui.web.modalRegreso import modalRegresoKanban
 from app.ui.web.panelEdicionTarea import EstadoGuardado, panelEdicionTarea
 from app.ui.web.tableroKanban import tableroKanban
+from app.ui.web.vistaMetricas import vistaMetricas
 
 
 @dataclass(frozen=True)
@@ -680,52 +681,77 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
             )
 
         # Caso vistaActiva == "METRICAS"
-        return html.main(
-            {
-                "id": "vista-metricas-contenedor",
-                "className": (
-                    "flex-1 flex flex-col overflow-hidden p-6 max-w-7xl w-full mx-auto "
-                    "animate-in fade-in duration-150"
+        proyectosActuales: tuple[Proyecto, ...] = ()
+        if conexion is not None:
+            resRecuperacion = recuperarProyectos(conexion)
+            if resRecuperacion.esExito():
+                proyectosActuales = resRecuperacion.obtenerValor()
+
+        proyectoActivo: Proyecto | None = None
+        if idProyectoActivo.esAlguno():
+            proyectoActivo = next(
+                (
+                    p
+                    for p in proyectosActuales
+                    if p.idProyecto == idProyectoActivo.obtenerValor()
                 ),
-            },
-            html.div(
+                None,
+            )
+        if proyectoActivo is None and len(proyectosActuales) > 0:
+            proyectoActivo = proyectosActuales[0]
+
+        if proyectoActivo is None:
+            return html.main(
                 {
-                    "className": "flex-1 flex items-center justify-center p-8 text-center"
+                    "id": "vista-metricas-contenedor",
+                    "className": (
+                        "flex-1 flex flex-col overflow-hidden p-6 max-w-7xl w-full mx-auto "
+                        "animate-in fade-in duration-150"
+                    ),
                 },
                 html.div(
                     {
-                        "className": (
-                            "max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border "
-                            "border-slate-200 space-y-4"
-                        )
+                        "className": "flex-1 flex items-center justify-center p-8 text-center"
                     },
                     html.div(
                         {
                             "className": (
-                                "w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center "
-                                "justify-center mx-auto text-xl font-bold"
+                                "max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border "
+                                "border-slate-200 space-y-4"
                             )
                         },
-                        "📊",
-                    ),
-                    html.h2(
-                        {"className": "text-lg font-semibold text-slate-800"},
-                        "Panel de Metricas y Analitica",
-                    ),
-                    html.p(
-                        {"className": "text-sm text-slate-500 leading-relaxed"},
-                        "Indicadores de avance, distribucion de tareas y auditoria de cuellos de botella.",
-                    ),
-                    html.button(
-                        {
-                            "id": "btn-volver-a-inicio-desde-metricas",
-                            "onClick": navegarAInicio,
-                            "className": "text-sm text-indigo-600 font-medium hover:underline",
-                        },
-                        "← Volver a Mis Proyectos",
+                        html.div(
+                            {
+                                "className": (
+                                    "w-12 h-12 bg-purple-50 text-purple-600 rounded-xl flex items-center "
+                                    "justify-center mx-auto text-xl font-bold"
+                                )
+                            },
+                            "📊",
+                        ),
+                        html.h2(
+                            {"className": "text-lg font-semibold text-slate-800"},
+                            "No hay proyecto seleccionado",
+                        ),
+                        html.p(
+                            {"className": "text-sm text-slate-500 leading-relaxed"},
+                            "Selecciona un proyecto desde la pantalla de inicio para visualizar sus métricas.",
+                        ),
+                        html.button(
+                            {
+                                "id": "btn-volver-a-inicio-desde-metricas",
+                                "onClick": navegarAInicio,
+                                "className": "text-sm text-indigo-600 font-medium hover:underline",
+                            },
+                            "← Volver a Mis Proyectos",
+                        ),
                     ),
                 ),
-            ),
+            )
+
+        return vistaMetricas(
+            proyecto=proyectoActivo,
+            alVolverWorkspace=navegarAWorkspace,
         )
 
     def guardarNuevoProyecto(nuevoProyecto: Proyecto) -> None:

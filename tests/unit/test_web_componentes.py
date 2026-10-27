@@ -60,6 +60,7 @@ from app.ui.web.modalRegreso import modalRegresoKanban
 from app.ui.web.panelEdicionTarea import EstadoGuardado, panelEdicionTarea
 from app.ui.web.tableroKanban import tableroKanban
 from app.ui.web.tarjetaTarea import tarjetaTarea
+from app.ui.web.vistaMetricas import vistaMetricas
 
 
 def _buscarPorId(vdom: Any, elementoId: str) -> Any:
@@ -2684,3 +2685,443 @@ class TestPanelEdicionTareaSideDrawer:
             if t.idTarea == "TAR-800"
         )
         assert tareaDb.activo is False
+
+
+class TestVistaMetricas:
+    """Suite de pruebas unitarias para la Vista de Métricas, Cuellos de Botella y Filtros (Bloque 6)."""
+
+    def testVistaMetricasCalculaResumenCuantitativoYAvance(self) -> None:
+        """Verifica UT-WEB-09 / EARS-07.2: Total activas, desglose Kanban, descartadas y avance global."""
+        from reactpy.core.layout import Layout
+
+        t1 = Tarea(
+            idTarea="TAR-301",
+            idPaquete="PAQ-301",
+            titulo="Tarea Pendiente",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.PENDIENTE,
+            activo=True,
+        )
+        t2 = Tarea(
+            idTarea="TAR-302",
+            idPaquete="PAQ-301",
+            titulo="Tarea En Progreso",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.EN_PROGRESO,
+            activo=True,
+        )
+        t3 = Tarea(
+            idTarea="TAR-303",
+            idPaquete="PAQ-301",
+            titulo="Tarea Terminada",
+            prioridad=PrioridadTarea.ALTA,
+            estado=EstadoKanban.TERMINADA,
+            activo=True,
+        )
+        t4 = Tarea(
+            idTarea="TAR-304",
+            idPaquete="PAQ-301",
+            titulo="Tarea Descartada",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.PENDIENTE,
+            activo=False,
+        )
+        paq = PaqueteTrabajo(
+            idPaquete="PAQ-301",
+            idProyecto="PROY-301",
+            nombre="Módulo Métricas",
+            tareas=(t1, t2, t3, t4),
+        )
+        proy = Proyecto(
+            idProyecto="PROY-301",
+            nombre="Proyecto Analítico",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(paq,),
+            integrantes=(),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                vistaMetricas(
+                    proyecto=proy,
+                    alVolverWorkspace=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "vista-metricas-contenedor") is not None
+        # 3 tareas activas, 1 descartada
+        assert _contieneTexto(_buscarPorId(modelo, "metrica-total-activas"), "3")
+        assert _contieneTexto(_buscarPorId(modelo, "metrica-total-inactivas"), "1")
+        assert _contieneTexto(_buscarPorId(modelo, "metrica-conteo-pendiente"), "1")
+        assert _contieneTexto(_buscarPorId(modelo, "metrica-conteo-en-progreso"), "1")
+        assert _contieneTexto(_buscarPorId(modelo, "metrica-conteo-terminada"), "1")
+        # 1 de 3 terminadas = 33.33%
+        assert _contieneTexto(
+            _buscarPorId(modelo, "porcentaje-avance-global"), "33.33%"
+        )
+
+    def testVistaMetricasSinTareasActivasMuestraCeroPorcientoYSinDivisionPorCero(
+        self,
+    ) -> None:
+        """Verifica EARS-07.5: Proyectos sin tareas muestran 0.0% con 'Sin tareas registradas' sin división por cero."""
+        from reactpy.core.layout import Layout
+
+        paqVacio = PaqueteTrabajo(
+            idPaquete="PAQ-302",
+            idProyecto="PROY-302",
+            nombre="Paquete Vacío",
+            tareas=(),
+        )
+        proyVacio = Proyecto(
+            idProyecto="PROY-302",
+            nombre="Proyecto Nuevo Sin Tareas",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(paqVacio,),
+            integrantes=(),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                vistaMetricas(
+                    proyecto=proyVacio,
+                    alVolverWorkspace=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "porcentaje-avance-global") is not None
+        assert _contieneTexto(_buscarPorId(modelo, "porcentaje-avance-global"), "0.0%")
+        assert _buscarPorId(modelo, "texto-sin-tareas-global") is not None
+        assert _contieneTexto(
+            _buscarPorId(modelo, "texto-sin-tareas-global"), "Sin tareas registradas"
+        )
+        # Barra paquete vacío también muestra leyenda neutral
+        assert _buscarPorId(modelo, "paquete-sin-tareas-PAQ-302") is not None
+        assert _contieneTexto(
+            _buscarPorId(modelo, "paquete-sin-tareas-PAQ-302"), "Sin tareas registradas"
+        )
+
+    def testVistaMetricasDistribucionCargaSinScoringNoAprobado(self) -> None:
+        """Verifica EARS-07.2: Muestra únicamente conteos observables y prohíbe etiquetas de scoring subjetivas."""
+        from reactpy.core.layout import Layout
+
+        m1 = Integrante(
+            cedula="0922334455",
+            idProyecto="PROY-303",
+            nombre="Valeria Castillo",
+            cargo=CargoIntegrante.DESARROLLADOR_FRONTEND,
+        )
+        tAsignada = Tarea(
+            idTarea="TAR-305",
+            idPaquete="PAQ-303",
+            titulo="Componente Tabla",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.TERMINADA,
+            cedulaResponsable=Alguno("0922334455"),
+            activo=True,
+        )
+        paq = PaqueteTrabajo(
+            idPaquete="PAQ-303",
+            idProyecto="PROY-303",
+            nombre="Frontend",
+            tareas=(tAsignada,),
+        )
+        proy = Proyecto(
+            idProyecto="PROY-303",
+            nombre="Portal Clientes",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(paq,),
+            integrantes=(m1,),
+        )
+
+        async def renderizar() -> Any:
+            async with Layout(
+                vistaMetricas(
+                    proyecto=proy,
+                    alVolverWorkspace=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                return update["model"]
+
+        modelo = asyncio.run(renderizar())
+        assert _buscarPorId(modelo, "seccion-carga-equipo") is not None
+        assert _buscarPorId(modelo, "miembro-carga-0922334455") is not None
+        assert _contieneTexto(
+            _buscarPorId(modelo, "conteo-asignadas-0922334455"), "1 asignadas"
+        )
+        assert _contieneTexto(
+            _buscarPorId(modelo, "conteo-terminadas-0922334455"), "1 completadas"
+        )
+
+        # Prohibición explícita de scoring subjetivo (EARS-07.2)
+        assert not _contieneTexto(modelo, "Carga óptima")
+        assert not _contieneTexto(modelo, "Carga alta")
+        assert not _contieneTexto(modelo, "Burnout")
+
+    def testVistaMetricasCuellosDeBotellaOrdenDescendenteYMotivos(self) -> None:
+        """Verifica EARS-07.3: Lista tareas con contadorRegresos > 0 ordenadas descendentemente con motivos históricos."""
+        from reactpy.core.layout import Layout
+
+        from app.domain.modelos import TransicionHistorial
+
+        tr1 = TransicionHistorial(
+            idTransicion="TR-A",
+            idTarea="TAR-310",
+            estadoOrigen=EstadoKanban.EN_PROGRESO,
+            estadoDestino=EstadoKanban.PENDIENTE,
+            fechaHora="2026-10-27T10:00:00",
+            comentario=Alguno("Rechazado por fallo en pruebas de integración"),
+        )
+        tRegresos2 = Tarea(
+            idTarea="TAR-310",
+            idPaquete="PAQ-304",
+            titulo="Tarea Con Dos Regresos",
+            prioridad=PrioridadTarea.CRITICA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=2,
+            historial=(tr1,),
+            activo=True,
+        )
+        tRegresos1 = Tarea(
+            idTarea="TAR-311",
+            idPaquete="PAQ-304",
+            titulo="Tarea Con Un Regreso",
+            prioridad=PrioridadTarea.MEDIA,
+            estado=EstadoKanban.PENDIENTE,
+            contadorRegresos=1,
+            activo=True,
+        )
+        tSinRegresos = Tarea(
+            idTarea="TAR-312",
+            idPaquete="PAQ-304",
+            titulo="Tarea Limpia",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.EN_PROGRESO,
+            contadorRegresos=0,
+            activo=True,
+        )
+        paq = PaqueteTrabajo(
+            idPaquete="PAQ-304",
+            idProyecto="PROY-304",
+            nombre="Calidad",
+            tareas=(tRegresos2, tRegresos1, tSinRegresos),
+        )
+        proy = Proyecto(
+            idProyecto="PROY-304",
+            nombre="Proyecto QA",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(paq,),
+            integrantes=(),
+        )
+
+        async def interactuar() -> Any:
+            async with Layout(
+                vistaMetricas(
+                    proyecto=proy,
+                    alVolverWorkspace=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                assert (
+                    _buscarPorId(update["model"], "cuello-botella-tarea-TAR-310")
+                    is not None
+                )
+                assert (
+                    _buscarPorId(update["model"], "cuello-botella-tarea-TAR-311")
+                    is not None
+                )
+                # La tarea sin regresos no aparece en cuellos de botella
+                assert (
+                    _buscarPorId(update["model"], "cuello-botella-tarea-TAR-312")
+                    is None
+                )
+
+                # Expandir detalles de TAR-310
+                btnExp = _buscarPorId(update["model"], "btn-expandir-motivos-TAR-310")
+                assert btnExp is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnExp["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                update2 = await layout.render()
+                return update2["model"]
+
+        modelo = asyncio.run(interactuar())
+        assert _buscarPorId(modelo, "motivos-regreso-TAR-310") is not None
+        assert _contieneTexto(modelo, "Rechazado por fallo en pruebas de integración")
+
+    def testVistaMetricasFiltrosAnaliticosYOrdenamiento(self) -> None:
+        """Verifica EARS-07.4: Sub-panel de filtros interactivos combinables y ordenamiento reactivo."""
+        from reactpy.core.layout import Layout
+
+        tA = Tarea(
+            idTarea="TAR-401",
+            idPaquete="PAQ-400",
+            titulo="Tarea Urgente",
+            prioridad=PrioridadTarea.CRITICA,
+            estado=EstadoKanban.EN_PROGRESO,
+            fechaObjetivo=Alguno("2026-11-20"),
+            activo=True,
+        )
+        tB = Tarea(
+            idTarea="TAR-402",
+            idPaquete="PAQ-400",
+            titulo="Tarea Normal",
+            prioridad=PrioridadTarea.BAJA,
+            estado=EstadoKanban.PENDIENTE,
+            fechaObjetivo=Alguno("2026-11-01"),
+            activo=True,
+        )
+        paq = PaqueteTrabajo(
+            idPaquete="PAQ-400",
+            idProyecto="PROY-400",
+            nombre="Core",
+            tareas=(tA, tB),
+        )
+        proy = Proyecto(
+            idProyecto="PROY-400",
+            nombre="Proyecto Filtros",
+            tipo=TipoProyecto.DESARROLLO_WEB,
+            paquetes=(paq,),
+            integrantes=(),
+        )
+
+        async def interactuar() -> None:
+            async with Layout(
+                vistaMetricas(
+                    proyecto=proy,
+                    alVolverWorkspace=lambda: None,
+                )
+            ) as layout:
+                update1 = await layout.render()
+                assert (
+                    _buscarPorId(update1["model"], "fila-tarea-analitica-TAR-401")
+                    is not None
+                )
+                assert (
+                    _buscarPorId(update1["model"], "fila-tarea-analitica-TAR-402")
+                    is not None
+                )
+
+                # Filtrar solo estado 'En progreso'
+                filtroEst = _buscarPorId(update1["model"], "filtro-estado")
+                assert filtroEst is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": filtroEst["eventHandlers"]["onChange"]["target"],
+                        "data": [{"target": {"value": EstadoKanban.EN_PROGRESO.value}}],
+                    }
+                )
+                update2 = await layout.render()
+                assert (
+                    _buscarPorId(update2["model"], "fila-tarea-analitica-TAR-401")
+                    is not None
+                )
+                assert (
+                    _buscarPorId(update2["model"], "fila-tarea-analitica-TAR-402")
+                    is None
+                )
+
+        asyncio.run(interactuar())
+
+    def testBotonVolverAlWorkspaceLlamaCallback(self) -> None:
+        """Verifica que el botón 'Volver al Workspace' invoque el callback alVolverWorkspace."""
+        from reactpy.core.layout import Layout
+
+        proy = _fabricarProyectoEjemplo(
+            idProyecto="PROY-305", nombre="Retorno Workspace"
+        )
+        regresados: list[bool] = []
+
+        async def interactuar() -> None:
+            async with Layout(
+                vistaMetricas(
+                    proyecto=proy,
+                    alVolverWorkspace=lambda: regresados.append(True),
+                )
+            ) as layout:
+                update = await layout.render()
+                btnVolver = _buscarPorId(
+                    update["model"], "btn-volver-workspace-desde-metricas"
+                )
+                assert btnVolver is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnVolver["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+
+        asyncio.run(interactuar())
+        assert len(regresados) == 1
+
+    def testIntegracionNavegacionMetricasEnComponenteApp(self) -> None:
+        """Verifica la navegación hacia Métricas y el regreso al Workspace dentro de componenteApp."""
+        import sqlite3
+
+        from reactpy.core.layout import Layout
+
+        from app.adapters.esquemaSqlite import inicializarEsquema
+        from app.adapters.repositorioSqlite import guardarProyectoCompleto
+
+        conexion = sqlite3.connect(":memory:")
+        inicializarEsquema(conexion)
+
+        proy = _fabricarProyectoEjemplo(
+            idProyecto="PROY-900", nombre="Proyecto Métricas E2E"
+        )
+        guardarProyectoCompleto(conexion, proy)
+
+        async def flujoNavegacion() -> None:
+            async with Layout(componenteApp(conexion=conexion)) as layout:
+                update0 = await layout.render()
+                # 1. Navegar a Métricas desde el header
+                btnMetricas = _buscarPorId(update0["model"], "nav-item-metricas")
+                assert btnMetricas is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnMetricas["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                updateMetricas = await layout.render()
+                assert (
+                    _buscarPorId(updateMetricas["model"], "vista-metricas-contenedor")
+                    is not None
+                )
+                assert (
+                    _buscarPorId(updateMetricas["model"], "kpis-metricas-grid")
+                    is not None
+                )
+
+                # 2. Retornar al Workspace desde el botón de la vista
+                btnVolverWs = _buscarPorId(
+                    updateMetricas["model"], "btn-volver-workspace-desde-metricas"
+                )
+                assert btnVolverWs is not None
+                await layout.deliver(
+                    {
+                        "type": "layout-event",
+                        "target": btnVolverWs["eventHandlers"]["onClick"]["target"],
+                        "data": [{}],
+                    }
+                )
+                updateWs = await layout.render()
+                assert (
+                    _buscarPorId(updateWs["model"], "vista-workspace-contenedor")
+                    is not None
+                )
+
+        asyncio.run(flujoNavegacion())
