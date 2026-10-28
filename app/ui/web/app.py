@@ -10,17 +10,21 @@ clave idempotente de creacion y confirmacion de cierre de panel.
 from __future__ import annotations
 
 import sqlite3
+import urllib.parse
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
 
-from reactpy import component, html, use_state
+from reactpy import component, html, use_location, use_state
+from reactpy.types import VdomDict
 
 from app.adapters.repositorioSqlite import (
     actualizarNombrePaquete,
     crearTareaConHistorial,
     eliminarIntegrante,
     eliminarPaqueteVacio,
+    eliminarProyecto,
     guardarProyectoCompleto,
     guardarTareaConHistorial,
     recuperarProyectos,
@@ -40,7 +44,6 @@ from app.domain.monadas import Alguno, Ninguno, Opcion
 from app.ui.web.barraLateral import barraLateralEdt
 from app.ui.web.estilos import (
     BORDE_SUAVE,
-    BOTON_PRIMARIO,
     FONDO_LIENZO,
     FONDO_SUPERFICIE,
     INDICADOR_GUARDADO,
@@ -68,6 +71,82 @@ def _castOpcion(opcion: Opcion[Any], _tipo: type) -> Opcion[Any]:
     return opcion
 
 
+def renderizarModalConfirmarEliminarProyecto(
+    idProyecto: str,
+    proyectos: tuple[Proyecto, ...],
+    alConfirmar: Callable[[], None],
+    alCancelar: Callable[[], None],
+) -> VdomDict:
+    """Renderiza modal centrado para confirmar la eliminacion permanente de un proyecto."""
+    proy = next((p for p in proyectos if p.idProyecto == idProyecto), None)
+    nombreProy = proy.nombre if proy is not None else idProyecto
+    return html.div(
+        {
+            "id": "modal-confirmar-eliminar-proyecto",
+            "className": (
+                "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 "
+                "backdrop-blur-sm p-4 animate-in fade-in duration-150"
+            ),
+        },
+        html.div(
+            {
+                "id": f"confirmacion-eliminar-proyecto-{idProyecto}",
+                "className": (
+                    "bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full p-6 space-y-4"
+                ),
+            },
+            html.div(
+                {"className": "flex items-start space-x-3"},
+                html.div(
+                    {
+                        "className": (
+                            "w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex "
+                            "items-center justify-center flex-shrink-0 text-lg font-bold"
+                        )
+                    },
+                    "⚠️",
+                ),
+                html.div(
+                    {"className": "space-y-1 text-left"},
+                    html.h3(
+                        {"className": "text-sm font-bold text-slate-900 leading-snug"},
+                        f"¿Eliminar proyecto '{nombreProy}'?",
+                    ),
+                    html.p(
+                        {"className": "text-xs text-slate-500 leading-relaxed"},
+                        "Esta acción eliminará permanentemente el proyecto, sus paquetes de trabajo, integrantes e historial.",
+                    ),
+                ),
+            ),
+            html.div(
+                {"className": "flex items-center justify-end space-x-3 pt-2"},
+                html.button(
+                    {
+                        "id": "btn-cancelar-eliminar-proyecto",
+                        "onClick": lambda e: alCancelar(),
+                        "className": (
+                            "px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 "
+                            "bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                        ),
+                    },
+                    "Cancelar",
+                ),
+                html.button(
+                    {
+                        "id": "btn-confirmar-eliminar-proyecto",
+                        "onClick": lambda e: alConfirmar(),
+                        "className": (
+                            "px-4 py-2 text-xs font-semibold text-white bg-rose-600 "
+                            "hover:bg-rose-700 rounded-lg shadow-sm transition-colors"
+                        ),
+                    },
+                    "Eliminar Proyecto",
+                ),
+            ),
+        ),
+    )
+
+
 @component
 def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
     """Componente raiz y enrutador reactivo montado en el servidor web.
@@ -77,8 +156,29 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
     # -------------------------------------------------------------------------
     # 1. Variables de Estado Global Reactivo (use_state)
     # -------------------------------------------------------------------------
-    vistaActiva, setVistaActiva = use_state("INICIO")
-    idProyectoActivo, setIdProyectoActivo = use_state(_castOpcion(Ninguno(), str))
+    # Sincronizacion inicial desde la URL (?vista=...&proyecto=...)
+    urlParams: dict[str, str] = {}
+    try:
+        loc = use_location()
+        if loc and loc.search:
+            urlParams = dict(urllib.parse.parse_qsl(loc.search.lstrip("?")))
+    except (RuntimeError, ValueError, AttributeError, KeyError):
+        urlParams = {}
+
+    vistaInicial = urlParams.get("vista", "INICIO").upper()
+    if vistaInicial not in ("INICIO", "WORKSPACE", "METRICAS"):
+        vistaInicial = "INICIO"
+
+    proyectoInicialId = urlParams.get("proyecto", "")
+    opcionProyectoInicial = (
+        _castOpcion(Alguno(proyectoInicialId), str)
+        if proyectoInicialId
+        else _castOpcion(Ninguno(), str)
+    )
+
+    vistaActiva, setVistaActiva = use_state(vistaInicial)
+    idProyectoActivo, setIdProyectoActivo = use_state(opcionProyectoInicial)
+    idProyectoAEliminar, setIdProyectoAEliminar = use_state("")
     idPaqueteSeleccionado, setIdPaqueteSeleccionado = use_state(
         _castOpcion(Ninguno(), str)
     )
@@ -120,6 +220,25 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
     def seleccionarProyecto(idProyecto: str) -> None:
         setIdProyectoActivo(Alguno(idProyecto))
         setVistaActiva("WORKSPACE")
+
+    def solicitarEliminarProyecto(idProyecto: str) -> None:
+        setIdProyectoAEliminar(idProyecto)
+
+    def cancelarEliminarProyecto() -> None:
+        setIdProyectoAEliminar("")
+
+    def confirmarEliminarProyecto(idProyecto: str) -> None:
+        if conexion is not None:
+            eliminarProyecto(conexion, idProyecto)
+        if (
+            idProyectoActivo.esAlguno()
+            and idProyectoActivo.obtenerValor() == idProyecto
+        ):
+            setIdProyectoActivo(_castOpcion(Ninguno(), str))
+            setIdPaqueteSeleccionado(_castOpcion(Ninguno(), str))
+            setVistaActiva("INICIO")
+        setIdProyectoAEliminar("")
+        forzarActualizacion()
 
     def seleccionarPaquete(idPaquete: str) -> None:
         setIdPaqueteSeleccionado(Alguno(idPaquete))
@@ -293,14 +412,13 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
                             "flex items-center space-x-3 text-left focus:outline-none group"
                         ),
                     },
-                    html.div(
+                    html.img(
                         {
-                            "className": (
-                                "w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center "
-                                "text-white font-bold text-sm shadow group-hover:bg-indigo-700 transition-colors"
-                            )
-                        },
-                        "AB",
+                            "id": "logo-agilban-header",
+                            "src": "/static/AgilBanLogo.png",
+                            "alt": "AgilBan Logo",
+                            "className": "w-8 h-8 object-contain rounded-lg shadow-sm group-hover:scale-105 transition-transform",
+                        }
                     ),
                     html.div(
                         {"className": "flex flex-col"},
@@ -350,20 +468,12 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
                     ),
                 ),
             ),
-            # Acciones del Encabezado
+            # Acciones del Encabezado (Indicador de Guardado Reactivo)
             html.div(
                 {"className": "flex items-center space-x-3"},
                 html.span(
                     {"className": INDICADOR_GUARDADO},
                     estadoGuardado.value,
-                ),
-                html.button(
-                    {
-                        "id": "btn-abrir-modal-nuevo-proyecto",
-                        "onClick": abrirModalNuevoProyecto,
-                        "className": BOTON_PRIMARIO,
-                    },
-                    "+ Nuevo Proyecto",
                 ),
             ),
         )
@@ -392,6 +502,7 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
                     alBuscar=setTextoBusquedaProyectos,
                     alSeleccionarProyecto=seleccionarProyecto,
                     alAbrirModalCreacion=abrirModalNuevoProyecto,
+                    alEliminarProyecto=solicitarEliminarProyecto,
                 ),
             )
 
@@ -668,6 +779,12 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
                     alAbrirMetricas=navegarAMetricas,
                     alAgregarIntegrante=agregarIntegranteWorkspace,
                     alEliminarIntegrante=eliminarIntegranteWorkspace,
+                    todosLosPaquetes=tuple(
+                        paq for p in proyectosActuales for paq in p.paquetes
+                    ),
+                    alEliminarProyecto=lambda pid=proyectoActivo.idProyecto: (
+                        solicitarEliminarProyecto(pid)
+                    ),
                 ),
                 html.div(
                     {
@@ -775,6 +892,18 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
             resRecuperacion = recuperarProyectos(conexion)
             if resRecuperacion.esExito():
                 proyectosActuales = resRecuperacion.obtenerValor()
+
+        if idProyectoAEliminar:
+            superposiciones.append(
+                renderizarModalConfirmarEliminarProyecto(
+                    idProyecto=idProyectoAEliminar,
+                    proyectos=proyectosActuales,
+                    alConfirmar=lambda pid=idProyectoAEliminar: (
+                        confirmarEliminarProyecto(pid)
+                    ),
+                    alCancelar=cancelarEliminarProyecto,
+                )
+            )
 
         if modalCreacionAbierto:
             superposiciones.append(
@@ -892,14 +1021,35 @@ def componenteApp(conexion: sqlite3.Connection | None = None) -> Any:
         pass
 
     # -------------------------------------------------------------------------
-    # 6. Retorno Estructural del Componente Raiz
+    # 6. Sincronizacion de URL y Retorno Estructural del Componente Raiz
     # -------------------------------------------------------------------------
+    idProyectoStr = (
+        idProyectoActivo.obtenerValor() if idProyectoActivo.esAlguno() else ""
+    )
+    scriptSyncUrl = html.script(
+        f"""
+        (function() {{
+            const vista = '{vistaActiva}';
+            const proyecto = '{idProyectoStr}';
+            const params = new URLSearchParams();
+            if (vista !== 'INICIO') params.set('vista', vista);
+            if (proyecto) params.set('proyecto', proyecto);
+            const queryStr = params.toString() ? '?' + params.toString() : '';
+            const nuevaUrl = window.location.pathname + queryStr;
+            if (window.location.search !== queryStr) {{
+                window.history.replaceState({{}}, '', nuevaUrl);
+            }}
+        }})();
+        """
+    )
+
     return html.div(
         {
             "id": "agilban-contenedor-raiz",
             "className": f"{FONDO_LIENZO} flex flex-col min-h-screen",
             **datosEstado,
         },
+        scriptSyncUrl,
         renderizarNavegacion(),
         renderizarCuerpoPrincipal(),
         renderizarSuperposiciones(),

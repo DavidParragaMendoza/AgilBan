@@ -44,6 +44,7 @@ def filtrarProyectosPorNombre(
 def renderizarTarjetaProyecto(
     proyecto: Proyecto,
     alSeleccionarProyecto: Callable[[str], None],
+    alEliminarProyecto: Callable[[str], None] | None = None,
 ) -> VdomDict:
     """Renderiza puramente la tarjeta interactiva de un proyecto con avance y metadatos."""
     todasLasTareas = tuple(t for paq in proyecto.paquetes for t in paq.tareas)
@@ -71,11 +72,32 @@ def renderizarTarjetaProyecto(
                     },
                     proyecto.tipo.value,
                 ),
-                html.span(
-                    {
-                        "className": "text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded"
-                    },
-                    f"{avance:.1f}%",
+                html.div(
+                    {"className": "flex items-center space-x-2"},
+                    html.span(
+                        {
+                            "className": "text-xs font-bold text-slate-700 bg-slate-100 px-2 py-0.5 rounded"
+                        },
+                        f"{avance:.1f}%",
+                    ),
+                    (
+                        html.button(
+                            {
+                                "id": f"btn-eliminar-proyecto-{proyecto.idProyecto}",
+                                "onClick": lambda e, pid=proyecto.idProyecto: (
+                                    alEliminarProyecto(pid)
+                                ),
+                                "className": (
+                                    "p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 "
+                                    "transition-colors text-xs"
+                                ),
+                                "title": "Eliminar proyecto",
+                            },
+                            "🗑️",
+                        )
+                        if alEliminarProyecto is not None
+                        else html.span()
+                    ),
                 ),
             ),
             html.h3(
@@ -233,6 +255,7 @@ def renderizarVistaInicio(
     alBuscar: Callable[[str], None],
     alSeleccionarProyecto: Callable[[str], None],
     alAbrirModalCreacion: Callable[[], None],
+    alEliminarProyecto: Callable[[str], None] | None = None,
 ) -> VdomDict:
     """Funcion pura de renderizado para la vista de inicio y catalogo de proyectos."""
     # 1. Caso de catalogo vacio absoluto
@@ -323,7 +346,9 @@ def renderizarVistaInicio(
                     "className": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in fade-in duration-150",
                 },
                 *[
-                    renderizarTarjetaProyecto(p, alSeleccionarProyecto)
+                    renderizarTarjetaProyecto(
+                        p, alSeleccionarProyecto, alEliminarProyecto
+                    )
                     for p in proyectosFiltrados
                 ],
             )
@@ -338,6 +363,7 @@ def vistaInicio(
     alBuscar: Callable[[str], None],
     alSeleccionarProyecto: Callable[[str], None],
     alAbrirModalCreacion: Callable[[], None],
+    alEliminarProyecto: Callable[[str], None] | None = None,
 ) -> Any:
     """Componente ReactPy para la pantalla de inicio y catalogo de proyectos."""
     return renderizarVistaInicio(
@@ -346,4 +372,5 @@ def vistaInicio(
         alBuscar=alBuscar,
         alSeleccionarProyecto=alSeleccionarProyecto,
         alAbrirModalCreacion=alAbrirModalCreacion,
+        alEliminarProyecto=alEliminarProyecto,
     )

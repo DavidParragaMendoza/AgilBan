@@ -7,10 +7,12 @@ modernas en el encabezado HTML para servir la interfaz web reactiva.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from collections.abc import Sequence
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from reactpy import html
 from reactpy.backend.fastapi import Options, configure
 from reactpy.types import VdomDict
@@ -40,9 +42,16 @@ def obtenerConexionApp(
 
 
 def crearElementosEncabezadoHtml() -> Sequence[VdomDict]:
-    """Genera los elementos del encabezado HTML incluyendo título, Tailwind CSS y tipografía Inter."""
+    """Genera los elementos del encabezado HTML incluyendo título, favicon, Tailwind CSS y tipografía Inter."""
     return (
         html.title("AgilBan — Gestión Ágil Local"),
+        html.link(
+            {
+                "rel": "icon",
+                "type": "image/png",
+                "href": "/static/AgilBanLogo.png",
+            }
+        ),
         html.meta(
             {"name": "viewport", "content": "width=device-width, initial-scale=1.0"}
         ),
@@ -79,6 +88,14 @@ def crearAplicacionWeb(rutaBaseDatos: str = RUTA_BASE_DATOS_DEFECTO) -> FastAPI:
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+    )
+
+    rutaEstaticos = os.path.join(os.path.dirname(__file__), "ui", "web", "static")
+    os.makedirs(rutaEstaticos, exist_ok=True)
+    aplicacion.mount(
+        "/static",
+        StaticFiles(directory=rutaEstaticos),
+        name="static",
     )
 
     opcionesConfiguracion = Options(

@@ -43,6 +43,7 @@ from app.ui.web.estilos import (
 )
 
 _PATRON_ID_PROYECTO = re.compile(r"^PROY-(\d+)$")
+_PATRON_ID_PAQUETE = re.compile(r"^PAQ-(\d+)$")
 
 
 def generarIdProyectoSecuencial(proyectosExistentes: tuple[Proyecto, ...]) -> str:
@@ -107,12 +108,19 @@ def construirEntidadProyecto(
     integrantes: tuple[dict[str, str], ...],
     proyectosExistentes: tuple[Proyecto, ...],
 ) -> Proyecto:
-    """Construye la entidad inmutable Proyecto con paquetes por defecto Paquete 1...N e integrantes."""
+    """Construye la entidad inmutable Proyecto con paquetes por defecto Paquete 1...N e integrantes correlativos globales."""
     idProyecto = generarIdProyectoSecuencial(proyectosExistentes)
+
+    mayorPaq = 0
+    for p in proyectosExistentes:
+        for paq in p.paquetes:
+            coincidencia = _PATRON_ID_PAQUETE.match(paq.idPaquete)
+            if coincidencia:
+                mayorPaq = max(mayorPaq, int(coincidencia.group(1)))
 
     paquetes = tuple(
         PaqueteTrabajo(
-            idPaquete=f"PAQ-{i + 1:03d}",
+            idPaquete=f"PAQ-{mayorPaq + i + 1:03d}",
             idProyecto=idProyecto,
             nombre=f"Paquete {i + 1}",
             tareas=(),
@@ -398,17 +406,13 @@ def renderizarModalCreacionProyecto(
                                 "value": str(numPaquetes),
                                 "onChange": lambda e: alCambiarPaquetes(
                                     int(e["target"]["value"])
-                                    if e["target"]["value"].isdigit()
-                                    else 1
+                                    if e["target"]["value"].strip().isdigit()
+                                    else 0
                                 ),
                                 "className": (
                                     INPUT_ERROR if errorPaquetes else INPUT_TEXTO
                                 ),
                             }
-                        ),
-                        html.span(
-                            {"className": "text-[11px] text-slate-400 block"},
-                            "Nombres generados por defecto: Paquete 1...N (renombrables en barra lateral).",
                         ),
                         (
                             html.span(

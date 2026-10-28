@@ -68,6 +68,7 @@ def guardarProyectoCompleto(
                     """INSERT INTO paquetes_trabajo (id_paquete, id_proyecto, nombre)
                        VALUES (?, ?, ?)
                        ON CONFLICT(id_paquete) DO UPDATE SET
+                           id_proyecto = excluded.id_proyecto,
                            nombre = excluded.nombre""",
                     (paquete.idPaquete, paquete.idProyecto, paquete.nombre),
                 )
@@ -464,19 +465,33 @@ def eliminarPaqueteVacio(
     conexion: sqlite3.Connection,
     idPaquete: str,
 ) -> Resultado[None, str]:
-    """Elimina un paquete de trabajo verificando previamente que no tenga tareas asociadas."""
+    """Elimina un paquete de trabajo verificando previamente que no tenga tareas activas asociadas."""
     try:
         with conexion:
             cursor = conexion.cursor()
             cursor.execute(
-                "SELECT COUNT(*) FROM tareas WHERE id_paquete = ?", (idPaquete,)
+                "SELECT COUNT(*) FROM tareas WHERE id_paquete = ? AND activo = 1",
+                (idPaquete,),
             )
-            totalTareas = cursor.fetchone()[0]
-            if totalTareas > 0:
+            totalActivas = cursor.fetchone()[0]
+            if totalActivas > 0:
                 return Fallo(
-                    f"No es posible eliminar el paquete '{idPaquete}' porque contiene {totalTareas} tarea(s) asociada(s)."
+                    f"No es posible eliminar el paquete '{idPaquete}' porque contiene {totalActivas} tarea(s) activa(s) asociada(s)."
                 )
 
+            # Limpiar tareas descartadas y su historial antes de eliminar el paquete
+            cursor.execute(
+                "DELETE FROM historial_transiciones WHERE id_tarea IN (SELECT id_tarea FROM tareas WHERE id_paquete = ?)",
+                (idPaquete,),
+            )
+            cursor.execute(
+                "DELETE FROM historial_creaciones WHERE id_tarea IN (SELECT id_tarea FROM tareas WHERE id_paquete = ?)",
+                (idPaquete,),
+            )
+            cursor.execute(
+                "DELETE FROM tareas WHERE id_paquete = ?",
+                (idPaquete,),
+            )
             cursor.execute(
                 "DELETE FROM paquetes_trabajo WHERE id_paquete = ?",
                 (idPaquete,),
@@ -489,6 +504,63 @@ def eliminarPaqueteVacio(
         return Exito(None)
     except sqlite3.Error as error:
         return Fallo(f"Error al eliminar el paquete de trabajo: {error}")
+
+
+@cronometrarOperacion(nombrePersonalizado="eliminarProyecto")
+def eliminarProyecto(
+    conexion: sqlite3.Connection,
+    idProyecto: str,
+) -> Resultado[None, str]:
+    """Elimina completamente un proyecto y todas sus dependencias relacionales (EDT, tareas, integrantes)."""
+    try:
+        with conexion:
+            cursor = conexion.cursor()
+            cursor.execute(
+                """DELETE FROM historial_transiciones
+                   WHERE id_tarea IN (
+                       SELECT t.id_tarea FROM tareas t
+                       JOIN paquetes_trabajo p ON t.id_paquete = p.id_paquete
+                       WHERE p.id_proyecto = ?
+                   )""",
+                (idProyecto,),
+            )
+            cursor.execute(
+                """DELETE FROM historial_creaciones
+                   WHERE id_tarea IN (
+                       SELECT t.id_tarea FROM tareas t
+                       JOIN paquetes_trabajo p ON t.id_paquete = p.id_paquete
+                       WHERE p.id_proyecto = ?
+                   )""",
+                (idProyecto,),
+            )
+            cursor.execute(
+                """DELETE FROM tareas
+                   WHERE id_paquete IN (
+                       SELECT id_paquete FROM paquetes_trabajo
+                       WHERE id_proyecto = ?
+                   )""",
+                (idProyecto,),
+            )
+            cursor.execute(
+                "DELETE FROM paquetes_trabajo WHERE id_proyecto = ?",
+                (idProyecto,),
+            )
+            cursor.execute(
+                "DELETE FROM integrantes WHERE id_proyecto = ?",
+                (idProyecto,),
+            )
+            cursor.execute(
+                "DELETE FROM proyectos WHERE id_proyecto = ?",
+                (idProyecto,),
+            )
+            if cursor.rowcount == 0:
+                return Fallo(
+                    f"No se encontró el proyecto con identificador '{idProyecto}'."
+                )
+
+        return Exito(None)
+    except sqlite3.Error as error:
+        return Fallo(f"Error al eliminar el proyecto: {error}")
 
 
 @cronometrarOperacion(nombrePersonalizado="eliminarIntegrante")

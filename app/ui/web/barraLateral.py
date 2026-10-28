@@ -115,6 +115,7 @@ def renderizarEncabezadoProyecto(
     proyecto: Proyecto,
     alVolverInicio: Callable[[], None],
     alAbrirMetricas: Callable[[], None],
+    alEliminarProyecto: Callable[[], None] | None = None,
 ) -> VdomDict:
     """Renderiza la cabecera del panel lateral con navegacion, titulo, tipo y metricas."""
     todasLasTareas = tuple(t for paq in proyecto.paquetes for t in paq.tareas)
@@ -141,15 +142,31 @@ def renderizarEncabezadoProyecto(
                 html.span({"className": "font-bold text-sm leading-none"}, "←"),
                 html.span("Mis Proyectos"),
             ),
-            html.span(
-                {
-                    "id": "badge-tipo-proyecto-sidebar",
-                    "className": (
-                        "px-2 py-0.5 rounded-full text-[10px] font-semibold "
-                        "bg-slate-100 text-slate-600 border border-slate-200 truncate max-w-[140px]"
-                    ),
-                },
-                proyecto.tipo.value,
+            html.div(
+                {"className": "flex items-center space-x-1.5"},
+                html.span(
+                    {
+                        "id": "badge-tipo-proyecto-sidebar",
+                        "className": (
+                            "px-2 py-0.5 rounded-full text-[10px] font-semibold "
+                            "bg-slate-100 text-slate-600 border border-slate-200 truncate max-w-[120px]"
+                        ),
+                    },
+                    proyecto.tipo.value,
+                ),
+                (
+                    html.button(
+                        {
+                            "id": "btn-eliminar-proyecto-sidebar",
+                            "onClick": lambda e: alEliminarProyecto(),
+                            "className": "p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors text-xs",
+                            "title": "Eliminar proyecto",
+                        },
+                        "🗑️",
+                    )
+                    if alEliminarProyecto is not None
+                    else html.span()
+                ),
             ),
         ),
         # Titulo del Proyecto
@@ -425,11 +442,11 @@ def renderizarItemPaquete(
     tareasActivas = obtenerTareasActivas(paquete)
     avance = calcularAvancePaquete(paquete)
 
-    tieneTareas = len(paquete.tareas) > 0
+    tieneTareasActivas = len(tareasActivas) > 0
     tituloEliminar = (
-        "No se puede eliminar un paquete con tareas asociadas"
-        if tieneTareas
-        else "Eliminar paquete de trabajo sin tareas"
+        "No se puede eliminar un paquete con tareas activas asociadas"
+        if tieneTareasActivas
+        else "Eliminar paquete de trabajo"
     )
 
     claseContenedor = (
@@ -512,7 +529,11 @@ def renderizarItemPaquete(
                         "onClick": lambda e, p=paquete: alSolicitarEliminar(p),
                         "className": (
                             "p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors "
-                            + ("opacity-40 cursor-not-allowed" if tieneTareas else "")
+                            + (
+                                "opacity-40 cursor-not-allowed"
+                                if tieneTareasActivas
+                                else ""
+                            )
                         ),
                         "title": tituloEliminar,
                     },
@@ -528,56 +549,69 @@ def renderizarConfirmacionEliminarPaquete(
     alConfirmar: Callable[[], None],
     alCancelar: Callable[[], None],
 ) -> VdomDict:
-    """Renderiza el cuadro de confirmacion para eliminar un paquete de trabajo sin tareas."""
+    """Renderiza modal centrado de confirmacion para eliminar un paquete de trabajo."""
     return html.div(
         {
-            "id": f"confirmacion-eliminar-paquete-{paquete.idPaquete}",
+            "id": f"modal-eliminar-paquete-{paquete.idPaquete}",
             "className": (
-                "p-3 rounded-xl bg-rose-50 border border-rose-200 shadow-sm space-y-2 "
-                "animate-in fade-in duration-150 mx-4 mb-2"
+                "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 "
+                "backdrop-blur-sm p-4 animate-in fade-in duration-150"
             ),
         },
         html.div(
-            {"className": "flex items-start space-x-2"},
-            html.span(
-                {"className": "text-rose-600 font-bold text-xs leading-none mt-0.5"},
-                "⚠️",
+            {
+                "id": f"confirmacion-eliminar-paquete-{paquete.idPaquete}",
+                "className": (
+                    "bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full p-6 space-y-4"
+                ),
+            },
+            html.div(
+                {"className": "flex items-start space-x-3"},
+                html.div(
+                    {
+                        "className": (
+                            "w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex "
+                            "items-center justify-center flex-shrink-0 text-lg font-bold"
+                        )
+                    },
+                    "⚠️",
+                ),
+                html.div(
+                    {"className": "space-y-1 text-left"},
+                    html.h3(
+                        {"className": "text-sm font-bold text-slate-900 leading-snug"},
+                        f"¿Eliminar '{paquete.nombre}'?",
+                    ),
+                    html.p(
+                        {"className": "text-xs text-slate-500 leading-relaxed"},
+                        "El paquete no contiene tareas activas. Si tiene tareas descartadas, serán removidas permanentemente.",
+                    ),
+                ),
             ),
             html.div(
-                {"className": "text-xs text-rose-900"},
-                html.p(
-                    {"className": "font-semibold leading-tight"},
-                    f"¿Eliminar '{paquete.nombre}'?",
+                {"className": "flex items-center justify-end space-x-3 pt-2"},
+                html.button(
+                    {
+                        "id": f"btn-cancelar-eliminar-paquete-{paquete.idPaquete}",
+                        "onClick": lambda e: alCancelar(),
+                        "className": (
+                            "px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 "
+                            "bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                        ),
+                    },
+                    "Cancelar",
                 ),
-                html.p(
-                    {"className": "text-[11px] text-rose-700 mt-1 leading-tight"},
-                    "El paquete no contiene tareas asociadas. Esta acción lo eliminará.",
+                html.button(
+                    {
+                        "id": f"btn-confirmar-eliminar-paquete-{paquete.idPaquete}",
+                        "onClick": lambda e: alConfirmar(),
+                        "className": (
+                            "px-4 py-2 text-xs font-semibold text-white bg-rose-600 "
+                            "hover:bg-rose-700 rounded-lg shadow-sm transition-colors"
+                        ),
+                    },
+                    "Confirmar",
                 ),
-            ),
-        ),
-        html.div(
-            {"className": "flex items-center justify-end space-x-2 pt-1"},
-            html.button(
-                {
-                    "id": f"btn-cancelar-eliminar-paquete-{paquete.idPaquete}",
-                    "onClick": lambda e: alCancelar(),
-                    "className": (
-                        "px-2.5 py-1 text-xs text-slate-600 hover:text-slate-800 "
-                        "bg-white border border-slate-200 rounded font-medium transition-colors"
-                    ),
-                },
-                "Cancelar",
-            ),
-            html.button(
-                {
-                    "id": f"btn-confirmar-eliminar-paquete-{paquete.idPaquete}",
-                    "onClick": lambda e: alConfirmar(),
-                    "className": (
-                        "px-3 py-1 bg-rose-600 text-white rounded text-xs font-semibold "
-                        "hover:bg-rose-700 shadow-sm transition-colors"
-                    ),
-                },
-                "Confirmar",
             ),
         ),
     )
@@ -686,56 +720,69 @@ def renderizarConfirmacionEliminarIntegrante(
     alConfirmar: Callable[[], None],
     alCancelar: Callable[[], None],
 ) -> VdomDict:
-    """Renderiza el cuadro de confirmacion previa para eliminar un integrante del equipo."""
+    """Renderiza modal centrado de confirmacion previa para eliminar un integrante del equipo."""
     return html.div(
         {
-            "id": f"confirmacion-eliminar-integrante-{integrante.cedula}",
+            "id": f"modal-eliminar-integrante-{integrante.cedula}",
             "className": (
-                "p-3 rounded-xl bg-rose-50 border border-rose-200 shadow-sm space-y-2 mt-2 "
-                "animate-in fade-in duration-150"
+                "fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 "
+                "backdrop-blur-sm p-4 animate-in fade-in duration-150"
             ),
         },
         html.div(
-            {"className": "flex items-start space-x-2"},
-            html.span(
-                {"className": "text-rose-600 font-bold text-xs leading-none mt-0.5"},
-                "⚠️",
+            {
+                "id": f"confirmacion-eliminar-integrante-{integrante.cedula}",
+                "className": (
+                    "bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-sm w-full p-6 space-y-4"
+                ),
+            },
+            html.div(
+                {"className": "flex items-start space-x-3"},
+                html.div(
+                    {
+                        "className": (
+                            "w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex "
+                            "items-center justify-center flex-shrink-0 text-lg font-bold"
+                        )
+                    },
+                    "⚠️",
+                ),
+                html.div(
+                    {"className": "space-y-1 text-left"},
+                    html.h3(
+                        {"className": "text-sm font-bold text-slate-900 leading-snug"},
+                        "¿Eliminar integrante del equipo?",
+                    ),
+                    html.p(
+                        {"className": "text-xs text-slate-500 leading-relaxed"},
+                        f"¿Deseas remover a {integrante.nombre} ({integrante.cargo.value}) de este proyecto?",
+                    ),
+                ),
             ),
             html.div(
-                {"className": "text-xs text-rose-900"},
-                html.p(
-                    {"className": "font-semibold leading-tight"},
-                    "¿Eliminar integrante del equipo?",
+                {"className": "flex items-center justify-end space-x-3 pt-2"},
+                html.button(
+                    {
+                        "id": f"btn-cancelar-eliminar-{integrante.cedula}",
+                        "onClick": lambda e: alCancelar(),
+                        "className": (
+                            "px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 "
+                            "bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                        ),
+                    },
+                    "Cancelar",
                 ),
-                html.p(
-                    {"className": "text-[11px] text-rose-700 mt-1 leading-tight"},
-                    f"¿Deseas remover a {integrante.nombre} ({integrante.cargo.value}) de este proyecto?",
+                html.button(
+                    {
+                        "id": f"btn-confirmar-eliminar-{integrante.cedula}",
+                        "onClick": lambda e: alConfirmar(),
+                        "className": (
+                            "px-4 py-2 text-xs font-semibold text-white bg-rose-600 "
+                            "hover:bg-rose-700 rounded-lg shadow-sm transition-colors"
+                        ),
+                    },
+                    "Confirmar",
                 ),
-            ),
-        ),
-        html.div(
-            {"className": "flex items-center justify-end space-x-2 pt-1"},
-            html.button(
-                {
-                    "id": f"btn-cancelar-eliminar-{integrante.cedula}",
-                    "onClick": lambda e: alCancelar(),
-                    "className": (
-                        "px-2.5 py-1 text-xs text-slate-600 hover:text-slate-800 "
-                        "bg-white border border-slate-200 rounded font-medium transition-colors"
-                    ),
-                },
-                "Cancelar",
-            ),
-            html.button(
-                {
-                    "id": f"btn-confirmar-eliminar-{integrante.cedula}",
-                    "onClick": lambda e: alConfirmar(),
-                    "className": (
-                        "px-3 py-1 bg-rose-600 text-white rounded text-xs font-semibold "
-                        "hover:bg-rose-700 shadow-sm transition-colors"
-                    ),
-                },
-                "Confirmar",
             ),
         ),
     )
@@ -1008,6 +1055,8 @@ def barraLateralEdt(
     alAbrirMetricas: Callable[[], None],
     alAgregarIntegrante: Callable[[Integrante], None],
     alEliminarIntegrante: Callable[[str], None],
+    todosLosPaquetes: tuple[PaqueteTrabajo, ...] = (),
+    alEliminarProyecto: Callable[[], None] | None = None,
 ) -> VdomDict:
     """Componente ReactPy de la barra lateral de navegacion EDT y equipo del proyecto."""
     # -------------------------------------------------------------------------
@@ -1059,7 +1108,8 @@ def barraLateralEdt(
             return
 
         nombreValido = res.obtenerValor()
-        nuevoId = generarIdPaqueteSecuencial(proyecto.paquetes)
+        pool = todosLosPaquetes if len(todosLosPaquetes) > 0 else proyecto.paquetes
+        nuevoId = generarIdPaqueteSecuencial(pool)
         nuevoPaquete = PaqueteTrabajo(
             idPaquete=nuevoId,
             idProyecto=proyecto.idProyecto,
@@ -1248,6 +1298,7 @@ def barraLateralEdt(
             proyecto=proyecto,
             alVolverInicio=alVolverInicio,
             alAbrirMetricas=alAbrirMetricas,
+            alEliminarProyecto=alEliminarProyecto,
         ),
         # 2. Alerta Contextual para Acciones Bloqueadas
         renderizarAlertaContextual(

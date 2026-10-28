@@ -186,8 +186,9 @@ def validarNombrePaquete(
 def validarEliminacionPaquete(
     paquete: PaqueteTrabajo,
 ) -> Resultado[str, ErrorReglaNegocio]:
-    """Valida que el paquete no tenga tareas registradas (activas o inactivas)."""
-    if len(paquete.tareas) > 0:
+    """Valida que el paquete no tenga tareas activas asociadas."""
+    tareasActivas = [t for t in paquete.tareas if t.activo]
+    if len(tareasActivas) > 0:
         return Fallo(
             ErrorReglaNegocio(
                 mensaje=f"No es posible eliminar el paquete '{paquete.nombre}' porque contiene tareas asociadas.",
