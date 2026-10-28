@@ -238,8 +238,7 @@ def tableroKanban(
                     {"className": "p-6 space-y-3"},
                     html.p(
                         {"className": "text-xs text-slate-500 leading-relaxed"},
-                        f"Crear una nueva tarea en el paquete '{paquete.nombre}'. "
-                        "El identificador correlativo global se asignará automáticamente en estado 'Pendiente'.",
+                        f"Crear una nueva tarea en el paquete '{paquete.nombre}'.",
                     ),
                     html.div(
                         {"className": "space-y-1.5"},

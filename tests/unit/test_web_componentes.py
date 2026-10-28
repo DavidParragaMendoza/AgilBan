@@ -3125,3 +3125,159 @@ class TestVistaMetricas:
                 )
 
         asyncio.run(flujoNavegacion())
+
+
+class TestMejorasYCorreccionesFlujoWeb:
+    """Verifica las 10 correcciones y mejoras funcionales de experiencia de usuario."""
+
+    def testLogoYRemocionBotonNuevoProyectoHeader(self) -> None:
+        """Verifica que el logo AgilBanLogo esté presente y que el botón de nuevo proyecto en header haya sido removido."""
+        from reactpy.core.layout import Layout
+
+        async def verificarHeader() -> None:
+            async with Layout(componenteApp(conexion=None)) as layout:
+                update = await layout.render()
+                model = update["model"]
+                # Logo debe estar presente
+                logo = _buscarPorId(model, "logo-agilban-header")
+                assert logo is not None
+                assert logo["attributes"]["src"] == "/static/AgilBanLogo.png"
+
+                # Boton nuevo proyecto en header no debe existir
+                btnHeaderNuevo = _buscarPorId(model, "btn-abrir-modal-nuevo-proyecto")
+                assert btnHeaderNuevo is None
+
+        asyncio.run(verificarHeader())
+
+    def testInputFechaTipoCalendario(self) -> None:
+        """Verifica que el selector de fecha límite de la tarea sea un input de tipo date."""
+        from reactpy.core.layout import Layout
+
+        tarea = Tarea(
+            idTarea="TAR-001",
+            idPaquete="PAQ-001",
+            titulo="Tarea con calendario",
+            estado=EstadoKanban.PENDIENTE,
+            prioridad=PrioridadTarea.MEDIA,
+            activo=True,
+        )
+
+        async def verificarInput() -> None:
+            async with Layout(
+                panelEdicionTarea(
+                    tarea=tarea,
+                    nombrePaquete="Paquete Alfa",
+                    integrantes=(),
+                    alGuardarParcial=lambda t: None,
+                    alDescartarTarea=lambda t: None,
+                    alCerrar=lambda: None,
+                )
+            ) as layout:
+                update = await layout.render()
+                inputFecha = _buscarPorId(update["model"], "input-fecha-tarea-drawer")
+                assert inputFecha is not None
+                assert inputFecha["attributes"]["type"] == "date"
+
+        asyncio.run(verificarInput())
+
+    def testFiltroEstadoMetricasIncluyeDescartadas(self) -> None:
+        """Verifica que el selector de estado en métricas incluya la opción de Tareas Descartadas."""
+        from reactpy.core.layout import Layout
+
+        proy = _fabricarProyectoEjemplo(idProyecto="PROY-FILTRO")
+
+        async def verificarMetricas() -> None:
+            async with Layout(
+                vistaMetricas(proyecto=proy, alVolverWorkspace=lambda: None)
+            ) as layout:
+                update = await layout.render()
+                selectEstado = _buscarPorId(update["model"], "filtro-estado")
+                assert selectEstado is not None
+                opciones = [
+                    c["attributes"]["value"]
+                    for c in selectEstado.get("children", [])
+                    if isinstance(c, dict)
+                    and "attributes" in c
+                    and "value" in c["attributes"]
+                ]
+                assert "DESCARTADAS" in opciones
+
+        asyncio.run(verificarMetricas())
+
+    def testEliminacionPaqueteConTareasDescartadasPermitida(self) -> None:
+        """Verifica que un paquete que sólo tiene tareas inactivas/descartadas pueda ser eliminado."""
+        tareaInactiva = Tarea(
+            idTarea="TAR-099",
+            idPaquete="PAQ-099",
+            titulo="Tarea Descartada",
+            estado=EstadoKanban.PENDIENTE,
+            prioridad=PrioridadTarea.BAJA,
+            activo=False,
+        )
+        paqueteConDescartadas = PaqueteTrabajo(
+            idPaquete="PAQ-099",
+            idProyecto="PROY-001",
+            nombre="Paquete con descartadas",
+            tareas=(tareaInactiva,),
+        )
+        res = validarEliminacionPaquete(paqueteConDescartadas)
+        assert res.esExito()
+
+    def testModalesConfirmacionCentradosConOverlay(self) -> None:
+        """Verifica que las advertencias y confirmaciones de eliminación se rendericen como modales centrados."""
+        paq = PaqueteTrabajo(
+            idPaquete="PAQ-M",
+            idProyecto="PROY-1",
+            nombre="Paquete Modal",
+            tareas=(),
+        )
+        vdomPaq = renderizarConfirmacionEliminarPaquete(
+            paquete=paq,
+            alConfirmar=lambda: None,
+            alCancelar=lambda: None,
+        )
+        assert "fixed" in vdomPaq["attributes"]["className"]
+        assert "items-center" in vdomPaq["attributes"]["className"]
+        assert "justify-center" in vdomPaq["attributes"]["className"]
+
+        integ = Integrante(
+            cedula="0999999999",
+            idProyecto="PROY-1",
+            nombre="Tester Modal",
+            cargo=CargoIntegrante.INGENIERO_QA,
+        )
+        vdomInteg = renderizarConfirmacionEliminarIntegrante(
+            integrante=integ,
+            alConfirmar=lambda: None,
+            alCancelar=lambda: None,
+        )
+        assert "fixed" in vdomInteg["attributes"]["className"]
+        assert "items-center" in vdomInteg["attributes"]["className"]
+
+    def testSinMicroMensajesInnecesarios(self) -> None:
+        """Verifica que se hayan removido los micro-mensajes que no aportan valor de modal y kanban."""
+        vdomModal = modalCreacionProyecto(
+            alCerrar=lambda: None,
+            alGuardar=lambda p: None,
+            proyectosExistentes=(),
+        )
+        assert not _contieneTexto(vdomModal, "Nombres generados por defecto: Paquete 1")
+
+        paq = PaqueteTrabajo(
+            idPaquete="PAQ-1",
+            idProyecto="PROY-1",
+            nombre="Paquete Sin Micro",
+            tareas=(),
+        )
+        vdomKanban = tableroKanban(
+            paquete=paq,
+            integrantes=(),
+            alSeleccionarTarea=lambda t: None,
+            alAvanzarTarea=lambda t, s: None,
+            alSolicitarDevolucion=lambda t: None,
+            alCrearTarea=lambda tit, cl: None,
+        )
+        assert not _contieneTexto(
+            vdomKanban,
+            "El identificador correlativo global se asignará automáticamente",
+        )

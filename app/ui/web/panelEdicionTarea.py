@@ -420,106 +420,134 @@ def panelEdicionTarea(
                 )
             )
 
-    # Diálogo de confirmación para descarte lógico
+    # Diálogo de confirmación para descarte lógico centrado como modal
     dialogoDescarte = html.div()
     if mostrarConfirmacionDescarte:
         dialogoDescarte = html.div(
             {
-                "id": "confirmacion-descarte-tarea",
+                "id": "modal-descarte-backdrop",
                 "className": (
-                    "p-4 rounded-xl bg-rose-50 border border-rose-200 space-y-3 "
-                    "animate-in fade-in duration-150"
+                    "fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center "
+                    "justify-center p-4 animate-in fade-in duration-150"
                 ),
             },
             html.div(
-                {"className": "flex items-start space-x-2.5"},
-                html.span({"className": "text-lg"}, "⚠️"),
+                {
+                    "id": "confirmacion-descarte-tarea",
+                    "className": (
+                        "bg-white rounded-2xl shadow-2xl border border-rose-200 p-6 space-y-4 "
+                        "max-w-md w-full animate-in zoom-in-95 duration-150"
+                    ),
+                },
                 html.div(
-                    {"className": "space-y-1"},
-                    html.h5(
+                    {"className": "flex items-start space-x-3"},
+                    html.div(
                         {
-                            "className": "text-xs font-bold text-rose-950 uppercase tracking-wider"
+                            "className": "w-10 h-10 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center text-lg flex-shrink-0"
                         },
-                        "¿Descartar esta tarea?",
+                        "⚠️",
                     ),
-                    html.p(
-                        {"className": "text-xs text-rose-800 leading-relaxed"},
-                        "La tarea se retirará inmediatamente del tablero Kanban activo, pero se conservará de forma inmutable "
-                        "en la base de datos para auditoría histórica y cálculo de métricas.",
+                    html.div(
+                        {"className": "space-y-1"},
+                        html.h5(
+                            {"className": "text-sm font-bold text-slate-900"},
+                            "¿Descartar esta tarea?",
+                        ),
+                        html.p(
+                            {"className": "text-xs text-slate-600 leading-relaxed"},
+                            "La tarea se retirará inmediatamente del tablero Kanban activo, pero se conservará de forma inmutable "
+                            "en la base de datos para auditoría histórica y cálculo de métricas.",
+                        ),
                     ),
                 ),
-            ),
-            html.div(
-                {"className": "flex items-center justify-end space-x-2 pt-1"},
-                html.button(
+                html.div(
                     {
-                        "id": "btn-cancelar-descarte-tarea",
-                        "type": "button",
-                        "onClick": lambda e: setMostrarConfirmacionDescarte(False),
-                        "className": f"{BOTON_SECUNDARIO} text-xs py-1 px-3",
+                        "className": "flex items-center justify-end space-x-3 pt-2 border-t border-slate-100"
                     },
-                    "Cancelar",
-                ),
-                html.button(
-                    {
-                        "id": "btn-confirmar-descarte-tarea",
-                        "type": "button",
-                        "onClick": lambda e: alDescartarTarea(tarea),
-                        "className": f"{BOTON_PELIGRO} text-xs py-1 px-3",
-                    },
-                    "Confirmar Descarte",
+                    html.button(
+                        {
+                            "id": "btn-cancelar-descarte-tarea",
+                            "type": "button",
+                            "onClick": lambda e: setMostrarConfirmacionDescarte(False),
+                            "className": f"{BOTON_SECUNDARIO} text-xs py-2 px-4",
+                        },
+                        "Cancelar",
+                    ),
+                    html.button(
+                        {
+                            "id": "btn-confirmar-descarte-tarea",
+                            "type": "button",
+                            "onClick": lambda e: alDescartarTarea(tarea),
+                            "className": f"{BOTON_PELIGRO} text-xs py-2 px-4",
+                        },
+                        "Confirmar Descarte",
+                    ),
                 ),
             ),
         )
 
-    # Diálogo de advertencia ante cierre con borrador pendiente
+    # Diálogo de advertencia ante cierre con borrador pendiente centrado como modal
     dialogoAdvertenciaCierre = html.div()
     if mostrarAdvertenciaCierre:
         dialogoAdvertenciaCierre = html.div(
             {
-                "id": "advertencia-cierre-drawer",
+                "id": "modal-advertencia-cierre-backdrop",
                 "className": (
-                    "p-4 rounded-xl bg-amber-50 border border-amber-200 space-y-3 "
-                    "animate-in fade-in duration-150"
+                    "fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center "
+                    "justify-center p-4 animate-in fade-in duration-150"
                 ),
             },
             html.div(
-                {"className": "flex items-start space-x-2"},
-                html.span({"className": "text-lg"}, "⚠️"),
+                {
+                    "id": "advertencia-cierre-drawer",
+                    "className": (
+                        "bg-white rounded-2xl shadow-2xl border border-amber-200 p-6 space-y-4 "
+                        "max-w-md w-full animate-in zoom-in-95 duration-150"
+                    ),
+                },
                 html.div(
-                    {"className": "space-y-1"},
-                    html.h5(
+                    {"className": "flex items-start space-x-3"},
+                    html.div(
                         {
-                            "className": "text-xs font-bold text-amber-950 uppercase tracking-wider"
+                            "className": "w-10 h-10 rounded-full bg-amber-100 text-amber-700 flex items-center justify-center text-lg flex-shrink-0"
                         },
-                        "Cambios pendientes de guardado",
+                        "⚠️",
                     ),
-                    html.p(
-                        {"className": "text-xs text-amber-800 leading-relaxed"},
-                        "Existen modificaciones sin confirmar o errores de persistencia en el borrador. "
-                        "Si cierras ahora, los cambios no guardados se descartarán.",
+                    html.div(
+                        {"className": "space-y-1"},
+                        html.h5(
+                            {"className": "text-sm font-bold text-slate-900"},
+                            "Cambios pendientes de guardado",
+                        ),
+                        html.p(
+                            {"className": "text-xs text-slate-600 leading-relaxed"},
+                            "Existen modificaciones sin confirmar o errores de persistencia en el borrador. "
+                            "Si cierras ahora, los cambios no guardados se descartarán.",
+                        ),
                     ),
                 ),
-            ),
-            html.div(
-                {"className": "flex items-center justify-end space-x-2 pt-1"},
-                html.button(
+                html.div(
                     {
-                        "id": "btn-volver-edicion-drawer",
-                        "type": "button",
-                        "onClick": lambda e: setMostrarAdvertenciaCierre(False),
-                        "className": f"{BOTON_SECUNDARIO} text-xs py-1 px-3",
+                        "className": "flex items-center justify-end space-x-3 pt-2 border-t border-slate-100"
                     },
-                    "Volver a la edición",
-                ),
-                html.button(
-                    {
-                        "id": "btn-descartar-borrador-cerrar",
-                        "type": "button",
-                        "onClick": lambda e: descartarBorradorYCerrar(),
-                        "className": f"{BOTON_PELIGRO} text-xs py-1 px-3 bg-amber-700 hover:bg-amber-800 focus:ring-amber-500",
-                    },
-                    "Descartar y Cerrar",
+                    html.button(
+                        {
+                            "id": "btn-volver-edicion-drawer",
+                            "type": "button",
+                            "onClick": lambda e: setMostrarAdvertenciaCierre(False),
+                            "className": f"{BOTON_SECUNDARIO} text-xs py-2 px-4",
+                        },
+                        "Volver a la edición",
+                    ),
+                    html.button(
+                        {
+                            "id": "btn-descartar-borrador-cerrar",
+                            "type": "button",
+                            "onClick": lambda e: descartarBorradorYCerrar(),
+                            "className": f"{BOTON_PELIGRO} text-xs py-2 px-4 bg-amber-600 hover:bg-amber-700 focus:ring-amber-500",
+                        },
+                        "Descartar y Cerrar",
+                    ),
                 ),
             ),
         )
@@ -775,19 +803,17 @@ def panelEdicionTarea(
                     {"className": "space-y-1.5"},
                     html.label(
                         {"className": LABEL_FORMULARIO},
-                        "Fecha Objetivo (AAAA-MM-DD)",
+                        "Fecha Objetivo",
                     ),
                     html.input(
                         {
                             "id": "input-fecha-tarea-drawer",
-                            "type": "text",
+                            "type": "date",
                             "value": fechaLocal,
-                            "placeholder": "Ej: 2026-11-20",
                             "onChange": lambda e: manejarCambioFecha(
                                 e["target"]["value"]
                             ),
                             "className": f"{INPUT_ERROR if errorFecha else INPUT_TEXTO} text-xs font-mono",
-                            "maxLength": 10,
                         }
                     ),
                     (

@@ -57,7 +57,6 @@ def vistaMetricas(
     filtroResponsable, setFiltroResponsable = use_state("")
     filtroPrioridad, setFiltroPrioridad = use_state("")
     soloVencidas, setSoloVencidas = use_state(False)
-    soloInactivas, setSoloInactivas = use_state(False)
     criterioOrden, setCriterioOrden = use_state("FECHA")  # "FECHA" o "PRIORIDAD"
 
     # Tarea expandida en cuellos de botella para ver motivos
@@ -85,8 +84,11 @@ def vistaMetricas(
     # -------------------------------------------------------------------------
     # 3. Aplicación de Filtros y Ordenamiento Analítico (HOF y Closures)
     # -------------------------------------------------------------------------
+    esFiltroDescartadas = filtroEstado == "DESCARTADAS"
     opcionEstado: Opcion[EstadoKanban] = (
-        Alguno(EstadoKanban(filtroEstado)) if filtroEstado else Ninguno()
+        Alguno(EstadoKanban(filtroEstado))
+        if (filtroEstado and not esFiltroDescartadas)
+        else Ninguno()
     )
     opcionResponsable: Opcion[str] = (
         Alguno(filtroResponsable) if filtroResponsable else Ninguno()
@@ -101,7 +103,7 @@ def vistaMetricas(
         cedula=opcionResponsable,
         prioridad=opcionPrioridad,
         soloVencidas=soloVencidas,
-        soloInactivas=soloInactivas,
+        soloInactivas=esFiltroDescartadas,
         fechaReferencia=fechaHoy,
     )
 
@@ -857,6 +859,7 @@ def vistaMetricas(
                         html.option({"value": est.value}, est.value)
                         for est in EstadoKanban
                     ],
+                    html.option({"value": "DESCARTADAS"}, "Descartadas / Inactivas"),
                 ),
             ),
             # Filtro Responsable
@@ -918,19 +921,6 @@ def vistaMetricas(
                     }
                 ),
                 html.span("Solo tareas vencidas"),
-            ),
-            html.label(
-                {"className": "flex items-center space-x-2 cursor-pointer"},
-                html.input(
-                    {
-                        "id": "checkbox-solo-inactivas",
-                        "type": "checkbox",
-                        "checked": soloInactivas,
-                        "onChange": lambda e: setSoloInactivas(not soloInactivas),
-                        "className": "w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500",
-                    }
-                ),
-                html.span("Mostrar descartadas (activo = 0)"),
             ),
             html.span(
                 {
